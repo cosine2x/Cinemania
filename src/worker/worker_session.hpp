@@ -10,6 +10,7 @@ namespace cinemania::worker
 struct WorkerOptions
 {
     std::wstring ffmpeg;
+    std::wstring scratch;
     HANDLE data = nullptr;
     HANDLE control = nullptr;
     HANDLE status = nullptr;

@@ -331,7 +331,7 @@ NativeError Session::read_message(PipeChannel& channel,
 NativeError Session::begin()
 {
     stage_ = protocol::Stage::preflight;
-    DWORD code = output_.prepare(input_.format().destination);
+    DWORD code = output_.prepare(input_.format().destination, options_.scratch);
     if (code != ERROR_SUCCESS)
     {
         return failure(code, "cannot reserve destination");

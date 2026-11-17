@@ -38,6 +38,13 @@ else()
         src/dll/bootstrap.cpp
         src/dll/bootstrap_diagnostics.cpp
         src/dll/executable_check.cpp
+        src/dll/capture_session.cpp
+        src/dll/encoder_client.cpp
+        src/dll/encoder_scratch.cpp
+        src/dll/encoder_transport.cpp
+        src/dll/game_export.cpp
+        src/dll/video_export.cpp
+        src/common/protocol.cpp
         src/dll/hook_callbacks.cpp
         src/dll/hook_transaction.cpp
         src/dll/passthrough_hooks.cpp

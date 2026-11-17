@@ -1,5 +1,6 @@
 #include "bootstrap_diagnostics.hpp"
 #include "executable_check.hpp"
+#include "game_export.hpp"
 #include "passthrough_hooks.hpp"
 
 #include <windows.h>
@@ -11,11 +12,17 @@ DWORD WINAPI bootstrap(void*)
     try
     {
         const cinemania::CheckResult check = cinemania::check_executable();
+
         cinemania::HookResult hooks{};
         if (check.outcome == cinemania::CheckOutcome::compatible)
         {
             hooks = cinemania::install_passthrough_hooks();
+            if (hooks.success && hooks.installed == 11 && !hooks.residual)
+            {
+                cinemania::game_export::enable_video_routing();
+            }
         }
+
         cinemania::report_bootstrap(check, hooks);
     }
     catch (...)

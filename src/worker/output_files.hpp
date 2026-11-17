@@ -15,7 +15,7 @@ public:
     OutputFiles(const OutputFiles&) = delete;
     OutputFiles& operator=(const OutputFiles&) = delete;
 
-    [[nodiscard]] DWORD prepare(const std::string& destination_utf8);
+    [[nodiscard]] DWORD prepare(const std::string& destination_utf8, const std::wstring& scratch);
     [[nodiscard]] DWORD make_temporary(std::wstring& path);
     [[nodiscard]] DWORD publish(const std::wstring& candidate);
     [[nodiscard]] DWORD cleanup();

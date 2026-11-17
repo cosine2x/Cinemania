@@ -93,7 +93,7 @@ DWORD OutputFiles::cleanup()
     return first_error;
 }
 
-DWORD OutputFiles::prepare(const std::string& destination_utf8)
+DWORD OutputFiles::prepare(const std::string& destination_utf8, const std::wstring& scratch)
 {
     DWORD error = utf8_path(destination_utf8, destination_);
     if (error != ERROR_SUCCESS)
@@ -110,6 +110,24 @@ DWORD OutputFiles::prepare(const std::string& destination_utf8)
         return ERROR_INVALID_NAME;
     }
     directory_ = destination_.substr(0, slash + 1);
+    if (!scratch.empty())
+    {
+        if (!is_absolute_path(scratch))
+        {
+            return ERROR_INVALID_NAME;
+        }
+        const DWORD attributes = GetFileAttributesW(scratch.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES)
+        {
+            return GetLastError();
+        }
+        if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        {
+            return ERROR_INVALID_NAME;
+        }
+        directory_ = scratch + L"\\";
+    }
     const std::wstring reservation_path = destination_ + L".cinemania-reservation";
     reservation_ = CreateFileW(reservation_path.c_str(),
                                GENERIC_READ | GENERIC_WRITE,

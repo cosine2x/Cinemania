@@ -42,7 +42,7 @@ bool absolute_executable(const std::wstring& path)
 
 bool parse_options(int argc, wchar_t** argv, cinemania::worker::WorkerOptions& options)
 {
-    if (argc != 11)
+    if (argc != 11 && argc != 13)
     {
         return false;
     }
@@ -56,6 +56,11 @@ bool parse_options(int argc, wchar_t** argv, cinemania::worker::WorkerOptions& o
         {
             bit = 1;
             options.ffmpeg = value;
+        }
+        else if (key == L"--scratch")
+        {
+            bit = 32;
+            options.scratch = value;
         }
         else
         {
@@ -99,9 +104,10 @@ bool parse_options(int argc, wchar_t** argv, cinemania::worker::WorkerOptions& o
         }
         seen |= bit;
     }
-    return seen == 31 && absolute_executable(options.ffmpeg) && options.data != options.control &&
-           options.data != options.status && options.control != options.status &&
-           GetFileType(options.data) == FILE_TYPE_PIPE &&
+    return (seen == 31 || seen == 63) && absolute_executable(options.ffmpeg) &&
+           (seen == 31 || absolute_executable(options.scratch)) &&
+           options.data != options.control && options.data != options.status &&
+           options.control != options.status && GetFileType(options.data) == FILE_TYPE_PIPE &&
            GetFileType(options.control) == FILE_TYPE_PIPE &&
            GetFileType(options.status) == FILE_TYPE_PIPE;
 }
