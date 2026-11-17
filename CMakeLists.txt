@@ -4,17 +4,36 @@ project(Cinemania LANGUAGES CXX)
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Cinemania requires Windows and the MSVC toolchain.")
 endif()
-if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
-    message(FATAL_ERROR "Cinemania requires an x86 (Win32) build.")
-endif()
 
-add_library(Cinemania SHARED
-    src/dll/bootstrap.cpp
-    src/dll/bootstrap_diagnostics.cpp
-    src/dll/executable_check.cpp
-    src/dll/cinemania.def)
-target_compile_features(Cinemania PRIVATE cxx_std_20)
-target_compile_options(Cinemania PRIVATE /W4 /WX /permissive- /EHsc)
-target_compile_definitions(Cinemania PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-target_link_libraries(Cinemania PRIVATE bcrypt shell32 ole32)
-set_property(TARGET Cinemania PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+option(CINEMANIA_BUILD_WORKER "Build the isolated x64 encoder worker" OFF)
+if(CINEMANIA_BUILD_WORKER)
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        message(FATAL_ERROR "CinemaniaWorker requires an x64 build.")
+    endif()
+    add_executable(CinemaniaWorker
+        src/common/protocol.cpp
+        src/worker/main.cpp
+        src/worker/native_runtime.cpp
+        src/worker/output_files.cpp
+        src/worker/session_input.cpp
+        src/worker/worker_session.cpp)
+    target_compile_features(CinemaniaWorker PRIVATE cxx_std_20)
+    target_compile_options(CinemaniaWorker PRIVATE /W4 /WX /permissive- /EHsc)
+    target_compile_definitions(CinemaniaWorker PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(CinemaniaWorker PRIVATE ole32)
+    set_property(TARGET CinemaniaWorker PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+else()
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+        message(FATAL_ERROR "Cinemania requires an x86 (Win32) build.")
+    endif()
+    add_library(Cinemania SHARED
+        src/dll/bootstrap.cpp
+        src/dll/bootstrap_diagnostics.cpp
+        src/dll/executable_check.cpp
+        src/dll/cinemania.def)
+    target_compile_features(Cinemania PRIVATE cxx_std_20)
+    target_compile_options(Cinemania PRIVATE /W4 /WX /permissive- /EHsc)
+    target_compile_definitions(Cinemania PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(Cinemania PRIVATE bcrypt shell32 ole32)
+    set_property(TARGET Cinemania PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
