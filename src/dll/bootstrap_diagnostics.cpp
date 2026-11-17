@@ -30,6 +30,22 @@ const char* error_domain_name(ErrorDomain domain)
     return "unknown";
 }
 
+const char* hook_domain_name(HookErrorDomain domain)
+{
+    switch (domain)
+    {
+        case HookErrorDomain::none:
+            return "none";
+        case HookErrorDomain::validation:
+            return "validation";
+        case HookErrorDomain::win32:
+            return "Win32";
+        case HookErrorDomain::minhook:
+            return "MinHook";
+    }
+    return "unknown";
+}
+
 bool write_log(const char* message, int length)
 {
     PWSTR local_app_data = nullptr;
@@ -89,7 +105,7 @@ bool write_log(const char* message, int length)
 }
 } // namespace
 
-void report_bootstrap(const CheckResult& result)
+void report_bootstrap(const CheckResult& result, const HookResult& hooks)
 {
     char hash_text[65] = "unavailable";
     if (result.has_hash)
@@ -106,7 +122,7 @@ void report_bootstrap(const CheckResult& result)
     const char* outcome = "check failure";
     if (result.outcome == CheckOutcome::compatible)
     {
-        outcome = "compatible load-only";
+        outcome = hooks.success ? "compatible hooks installed" : "compatible hooks failed";
     }
     else if (result.outcome == CheckOutcome::unsupported)
     {
@@ -116,12 +132,18 @@ void report_bootstrap(const CheckResult& result)
     char message[512]{};
     const int length =
         sprintf_s(message,
-                  "Cinemania: %s; SHA256=%s; stage=%s; error domain=%s; code=0x%08lX\r\n",
+                  "Cinemania: %s; SHA256=%s; stage=%s; error domain=%s; code=0x%08lX; hooks=%u; "
+                  "hook stage=%s; hook domain=%s; hook code=0x%08lX; residual=%u\r\n",
                   outcome,
                   hash_text,
                   result.stage,
                   error_domain_name(result.domain),
-                  result.code);
+                  result.code,
+                  hooks.installed,
+                  hooks.stage,
+                  hook_domain_name(hooks.domain),
+                  hooks.code,
+                  hooks.residual ? 1U : 0U);
     if (length <= 0)
     {
         OutputDebugStringA("Cinemania: diagnostic formatting failed\n");

@@ -1,0 +1,228 @@
+#include "passthrough_hooks.hpp"
+
+#include "hook_callbacks.hpp"
+#include "hook_transaction.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+#include <windows.h>
+
+namespace cinemania
+{
+namespace
+{
+struct EntrySpec
+{
+    std::size_t rva;
+    std::array<unsigned char, 8> bytes;
+    std::size_t length;
+};
+
+constexpr std::array<EntrySpec, 4> kEntries{{
+    {0x2f4510, {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8}, 6},
+    {0x2f4480, {0x8b, 0x49, 0x50, 0x8b, 0x49, 0x14}, 6},
+    {0x55a150, {0x56, 0x8b, 0xf1, 0x8b, 0x46, 0x04}, 6},
+    {0x502460, {0x8b, 0x44, 0x24, 0x04, 0x66, 0x83, 0x38, 0x00}, 8},
+}};
+constexpr std::array<std::size_t, 7> kImportRvas{
+    0x728050, 0x728080, 0x728084, 0x728088, 0x72808c, 0x728090, 0x728094};
+constexpr std::array<const char*, 7> kImportNames{"AVIFileRelease",
+                                                  "AVIStreamWrite",
+                                                  "AVIStreamSetFormat",
+                                                  "AVIMakeCompressedStream",
+                                                  "AVISaveOptions",
+                                                  "AVIFileCreateStreamW",
+                                                  "AVIStreamRelease"};
+
+bool mapped_range(const void* address, std::size_t length, const void* image, bool executable)
+{
+    const auto begin = reinterpret_cast<std::uintptr_t>(address);
+    if (length == 0 || begin > UINTPTR_MAX - length)
+    {
+        return false;
+    }
+    const auto end = begin + length;
+    auto cursor = begin;
+    while (cursor < end)
+    {
+        MEMORY_BASIC_INFORMATION region{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &region, sizeof(region)) !=
+                sizeof(region) ||
+            region.AllocationBase != image || region.State != MEM_COMMIT ||
+            (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+        {
+            return false;
+        }
+        const DWORD protection = region.Protect & 0xff;
+        const bool readable = protection == PAGE_READONLY || protection == PAGE_READWRITE ||
+                              protection == PAGE_WRITECOPY || protection == PAGE_EXECUTE_READ ||
+                              protection == PAGE_EXECUTE_READWRITE ||
+                              protection == PAGE_EXECUTE_WRITECOPY;
+        if (!readable ||
+            (executable && protection != PAGE_EXECUTE_READ &&
+             protection != PAGE_EXECUTE_READWRITE && protection != PAGE_EXECUTE_WRITECOPY))
+        {
+            return false;
+        }
+        const auto next = reinterpret_cast<std::uintptr_t>(region.BaseAddress) + region.RegionSize;
+        if (next <= cursor)
+        {
+            return false;
+        }
+        cursor = next;
+    }
+    return true;
+}
+
+bool image_size(unsigned char* base, std::size_t& size)
+{
+    if (!mapped_range(base, sizeof(IMAGE_DOS_HEADER), base, false))
+    {
+        return false;
+    }
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0 || dos->e_lfanew > 0x100000)
+    {
+        return false;
+    }
+    if (reinterpret_cast<std::uintptr_t>(base) >
+        UINTPTR_MAX - static_cast<std::size_t>(dos->e_lfanew))
+    {
+        return false;
+    }
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(base + dos->e_lfanew);
+    if (!mapped_range(nt, sizeof(*nt), base, false) || nt->Signature != IMAGE_NT_SIGNATURE ||
+        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
+        nt->FileHeader.SizeOfOptionalHeader < sizeof(IMAGE_OPTIONAL_HEADER32) ||
+        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC)
+    {
+        return false;
+    }
+    size = nt->OptionalHeader.SizeOfImage;
+    return size != 0 && reinterpret_cast<std::uintptr_t>(base) <= UINTPTR_MAX - size;
+}
+
+bool in_image(std::size_t rva, std::size_t length, std::size_t size)
+{
+    return rva <= size && length <= size - rva;
+}
+
+template <typename Function> void* function_address(Function function)
+{
+    return reinterpret_cast<void*>(function);
+}
+
+template <typename Function> void** original_address(Function& function)
+{
+    // MinHook writes the executable trampoline address to this x86 function pointer slot.
+    return reinterpret_cast<void**>(&function);
+}
+} // namespace
+
+HookResult install_passthrough_hooks()
+{
+    HookResult failure{};
+    failure.domain = HookErrorDomain::validation;
+    failure.stage = "image validation";
+    auto* base = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    std::size_t size = 0;
+    if (base == nullptr || !image_size(base, size))
+    {
+        return failure;
+    }
+    for (const EntrySpec& entry : kEntries)
+    {
+        if (!in_image(entry.rva, entry.length, size) ||
+            !mapped_range(base + entry.rva, entry.length, base, true) ||
+            std::memcmp(base + entry.rva, entry.bytes.data(), entry.length) != 0)
+        {
+            failure.stage = "entry validation";
+            return failure;
+        }
+    }
+
+    HMODULE avifile = GetModuleHandleW(L"avifil32.dll");
+    if (avifile == nullptr)
+    {
+        failure.domain = HookErrorDomain::win32;
+        failure.stage = "avifil32 module";
+        failure.code = GetLastError();
+        return failure;
+    }
+    std::array<void*, 7> originals{};
+    for (std::size_t index = 0; index < originals.size(); ++index)
+    {
+        const std::size_t rva = kImportRvas[index];
+        if (!in_image(rva, sizeof(void*), size) ||
+            !mapped_range(base + rva, sizeof(void*), base, false))
+        {
+            failure.stage = "import validation";
+            return failure;
+        }
+        originals[index] = reinterpret_cast<void*>(GetProcAddress(avifile, kImportNames[index]));
+        if (originals[index] == nullptr ||
+            *reinterpret_cast<void**>(base + rva) != originals[index])
+        {
+            failure.stage = "import owner";
+            return failure;
+        }
+    }
+
+    namespace callbacks = hook_callbacks;
+    callbacks::file_release_original =
+        reinterpret_cast<decltype(callbacks::file_release_original)>(originals[0]);
+    callbacks::stream_write_original =
+        reinterpret_cast<decltype(callbacks::stream_write_original)>(originals[1]);
+    callbacks::stream_set_format_original =
+        reinterpret_cast<decltype(callbacks::stream_set_format_original)>(originals[2]);
+    callbacks::make_compressed_original =
+        reinterpret_cast<decltype(callbacks::make_compressed_original)>(originals[3]);
+    callbacks::save_options_original =
+        reinterpret_cast<decltype(callbacks::save_options_original)>(originals[4]);
+    callbacks::create_stream_original =
+        reinterpret_cast<decltype(callbacks::create_stream_original)>(originals[5]);
+    callbacks::stream_release_original =
+        reinterpret_cast<decltype(callbacks::stream_release_original)>(originals[6]);
+
+    std::array<EntryHook, 4> entries{{
+        {base + kEntries[0].rva,
+         function_address(callbacks::do_shoot),
+         original_address(callbacks::do_shoot_original),
+         kEntries[0].bytes.data(),
+         kEntries[0].length},
+        {base + kEntries[1].rva,
+         function_address(callbacks::abort_requested),
+         original_address(callbacks::abort_original),
+         kEntries[1].bytes.data(),
+         kEntries[1].length},
+        {base + kEntries[2].rva,
+         function_address(callbacks::open_export),
+         original_address(callbacks::open_original),
+         kEntries[2].bytes.data(),
+         kEntries[2].length},
+        {base + kEntries[3].rva,
+         function_address(callbacks::localize),
+         original_address(callbacks::localize_original),
+         kEntries[3].bytes.data(),
+         kEntries[3].length},
+    }};
+    const std::array<void*, 7> replacements{function_address(callbacks::file_release),
+                                            function_address(callbacks::stream_write),
+                                            function_address(callbacks::stream_set_format),
+                                            function_address(callbacks::make_compressed),
+                                            function_address(callbacks::save_options),
+                                            function_address(callbacks::create_stream),
+                                            function_address(callbacks::stream_release)};
+    std::array<ImportHook, 7> imports{};
+    for (std::size_t index = 0; index < imports.size(); ++index)
+    {
+        imports[index] = {reinterpret_cast<void**>(base + kImportRvas[index]),
+                          originals[index],
+                          replacements[index]};
+    }
+    return install_hooks(entries, imports);
+}
+} // namespace cinemania

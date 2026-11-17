@@ -26,14 +26,25 @@ else()
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
         message(FATAL_ERROR "Cinemania requires an x86 (Win32) build.")
     endif()
+    enable_language(C)
+    add_library(CinemaniaMinHook STATIC
+        third_party/minhook/src/buffer.c
+        third_party/minhook/src/hook.c
+        third_party/minhook/src/trampoline.c
+        third_party/minhook/src/hde/hde32.c)
+    target_include_directories(CinemaniaMinHook PUBLIC third_party/minhook/include)
+    set_property(TARGET CinemaniaMinHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_library(Cinemania SHARED
         src/dll/bootstrap.cpp
         src/dll/bootstrap_diagnostics.cpp
         src/dll/executable_check.cpp
+        src/dll/hook_callbacks.cpp
+        src/dll/hook_transaction.cpp
+        src/dll/passthrough_hooks.cpp
         src/dll/cinemania.def)
     target_compile_features(Cinemania PRIVATE cxx_std_20)
     target_compile_options(Cinemania PRIVATE /W4 /WX /permissive- /EHsc)
     target_compile_definitions(Cinemania PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-    target_link_libraries(Cinemania PRIVATE bcrypt shell32 ole32)
+    target_link_libraries(Cinemania PRIVATE bcrypt shell32 ole32 CinemaniaMinHook)
     set_property(TARGET Cinemania PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()

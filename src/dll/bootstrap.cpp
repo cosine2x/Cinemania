@@ -1,5 +1,6 @@
 #include "bootstrap_diagnostics.hpp"
 #include "executable_check.hpp"
+#include "passthrough_hooks.hpp"
 
 #include <windows.h>
 
@@ -9,7 +10,13 @@ DWORD WINAPI bootstrap(void*)
 {
     try
     {
-        cinemania::report_bootstrap(cinemania::check_executable());
+        const cinemania::CheckResult check = cinemania::check_executable();
+        cinemania::HookResult hooks{};
+        if (check.outcome == cinemania::CheckOutcome::compatible)
+        {
+            hooks = cinemania::install_passthrough_hooks();
+        }
+        cinemania::report_bootstrap(check, hooks);
     }
     catch (...)
     {
