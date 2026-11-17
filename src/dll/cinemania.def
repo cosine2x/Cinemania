@@ -1,0 +1,3 @@
+LIBRARY Cinemania
+EXPORTS
+    CinemaniaLoadAnchor @1
