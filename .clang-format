@@ -22,14 +22,16 @@ AllowShortIfStatementsOnASingleLine: Never
 AllowShortLambdasOnASingleLine: None
 AllowShortLoopsOnASingleLine: false
 BinPackArguments: false
-BinPackParameters: false
+BinPackParameters: OnePerLine
 MaxEmptyLinesToKeep: 1
 SeparateDefinitionBlocks: Always
 IncludeBlocks: Preserve
-SortIncludes: CaseSensitive
+SortIncludes:
+  Enabled: true
+  IgnoreCase: false
 SortUsingDeclarations: Never
 AlignAfterOpenBracket: Align
 AlignConsecutiveAssignments: None
 AlignConsecutiveDeclarations: None
-ReflowComments: false
+ReflowComments: Never
 FixNamespaceComments: true
