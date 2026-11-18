@@ -19,6 +19,7 @@ namespace
 {
 // Leave CPU capacity for the game while allowing a small parallel conversion pool.
 constexpr std::uint32_t kMaxVideoFilterThreads = 4;
+constexpr wchar_t kAudioBitrate[] = L"512k";
 
 Deadline deadline()
 {
@@ -64,7 +65,8 @@ std::vector<std::wstring> preflight_arguments(const std::wstring& path, bool aud
                       L"yuv420p"});
     if (audio_expected)
     {
-        arguments.insert(arguments.end(), {L"-c:a", L"aac", L"-threads:a", L"1", L"-b:a", L"192k"});
+        arguments.insert(arguments.end(),
+                         {L"-c:a", L"aac", L"-threads:a", L"1", L"-b:a", kAudioBitrate});
     }
     arguments.insert(arguments.end(), {L"-progress", L"pipe:2", L"-f", L"mp4", path});
     return arguments;
@@ -142,7 +144,7 @@ std::vector<std::wstring> mux_arguments(const SessionFormat& format,
             L"-c:a",       L"aac",
             L"-threads:a", L"1",
             L"-ar",        std::to_wstring(format.sample_rate),
-            L"-b:a",       L"192k",
+            L"-b:a",       kAudioBitrate,
             L"-af",        L"asetpts=PTS+" + std::to_wstring(format.audio_offset) + L"/SR/TB"};
         arguments.insert(arguments.end(), input.begin(), input.end());
     }
@@ -158,7 +160,8 @@ std::vector<std::wstring> mux_arguments(const SessionFormat& format,
 
 NativeError run_finished_process(const std::wstring& executable,
                                  const std::vector<std::wstring>& arguments,
-                                 StopState& stop)
+                                 StopState& stop,
+                                 const std::function<NativeError()>& progress = {})
 {
     EncoderProcess process;
     auto error = process.start(executable, arguments, stop);
@@ -167,7 +170,7 @@ NativeError run_finished_process(const std::wstring& executable,
         return error;
     }
     process.close_stdin();
-    const auto result = process.finish(stop, deadline());
+    const auto result = process.finish(stop, deadline(), progress);
     if (result.error)
     {
         return result.error;
@@ -437,7 +440,11 @@ NativeError Session::handle_message(const protocol::Header& header,
 NativeError Session::finish()
 {
     stage_ = protocol::Stage::video;
-    const auto video_result = video_.finish(stop_, deadline());
+    const auto progress = [this]()
+    {
+        return send_progress();
+    };
+    const auto video_result = video_.finish(stop_, deadline(), progress);
     if (video_result.error)
     {
         return video_result.error;
@@ -460,7 +467,8 @@ NativeError Session::finish()
     auto error =
         run_finished_process(options_.ffmpeg,
                              mux_arguments(input_.format(), video_path_, audio_path_, candidate),
-                             stop_);
+                             stop_,
+                             progress);
     if (error)
     {
         return error;

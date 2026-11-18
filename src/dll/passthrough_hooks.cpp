@@ -1,7 +1,9 @@
 #include "passthrough_hooks.hpp"
 
+#include "export_volume.hpp"
 #include "hook_callbacks.hpp"
 #include "hook_transaction.hpp"
+#include "openal_capture_hooks.hpp"
 
 #include "viewport_capture_hooks.hpp"
 
@@ -37,7 +39,7 @@ constexpr std::array<EntrySpec, 4> kViewportEntries{{
     {0x55c430, {0x6a, 0xff, 0x68, 0xa0, 0x96, 0xae, 0x00}, 7},
     {0x55dba0, {0x83, 0xec, 0x10, 0x56, 0x8b, 0xf1}, 6},
 }};
-constexpr std::size_t kEntryCount = kEntries.size() + kViewportEntries.size();
+constexpr std::size_t kEntryCount = kEntries.size() + kViewportEntries.size() + 3;
 // Native EVENT ring functions in the pinned 2.12.0 image.
 constexpr std::array<EntrySpec, 3> kRenderAheadFunctions{{
     {0x58bab0, {0x51, 0x57, 0x8b, 0xf9, 0x83, 0xbf, 0xf8, 0x09}, 8},
@@ -297,13 +299,47 @@ HookResult install_passthrough_hooks()
                                             function_address(callbacks::save_options),
                                             function_address(callbacks::create_stream),
                                             function_address(callbacks::stream_release)};
-    std::array<ImportHook, 7> imports{};
-    for (std::size_t index = 0; index < imports.size(); ++index)
+    std::array<ImportHook, 16> imports{};
+    for (std::size_t index = 0; index < replacements.size(); ++index)
     {
         imports[index] = {reinterpret_cast<void**>(base + kImportRvas[index]),
                           originals[index],
                           replacements[index]};
     }
+    std::array<ImportHook, 7> audio_imports{};
+    if (!openal_capture_hooks::prepare(base, size, entries[8], audio_imports))
+    {
+        failure.stage = "OpenAL capture hook validation";
+        return failure;
+    }
+    for (std::size_t index = 0; index < audio_imports.size(); ++index)
+    {
+        imports[index + replacements.size()] = audio_imports[index];
+    }
+
+    if (!in_image(0x39d6d2, 20, size) || !mapped_range(base + 0x39d6d2, 20, base, true) ||
+        !in_image(0x7362a8, 8, size) || !mapped_range(base + 0x7362a8, 8, base, false) ||
+        !in_image(0x741ea8, 8, size) || !mapped_range(base + 0x741ea8, 8, base, false) ||
+        !in_image(0x7283d0, sizeof(void*), size) ||
+        !mapped_range(base + 0x7283d0, sizeof(void*), base, false) ||
+        !in_image(0x728388, sizeof(void*), size) ||
+        !mapped_range(base + 0x728388, sizeof(void*), base, false))
+    {
+        failure.stage = "OpenAL gain image validation";
+        return failure;
+    }
+
+    std::array<EntryHook, 2> gain_entries{};
+    std::array<ImportHook, 2> gain_imports{};
+    if (!export_volume::prepare(base, size, gain_entries, gain_imports))
+    {
+        failure.stage = "OpenAL gain hook validation";
+        return failure;
+    }
+    entries[9] = gain_entries[0];
+    entries[10] = gain_entries[1];
+    imports[14] = gain_imports[0];
+    imports[15] = gain_imports[1];
     return install_hooks(entries, imports);
 }
 } // namespace cinemania

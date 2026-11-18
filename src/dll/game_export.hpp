@@ -42,6 +42,7 @@ bool write(PAVISTREAM stream,
            LONG samples,
            LPVOID buffer,
            LONG bytes,
+           DWORD flags,
            LONG* samples_written,
            LONG* bytes_written,
            HRESULT& result);

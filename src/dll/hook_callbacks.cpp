@@ -109,8 +109,15 @@ HRESULT WINAPI stream_write(PAVISTREAM stream,
 
     try
     {
-        if (game_export::write(
-                stream, start, samples, buffer, bytes, samples_written, bytes_written, result))
+        if (game_export::write(stream,
+                               start,
+                               samples,
+                               buffer,
+                               bytes,
+                               flags,
+                               samples_written,
+                               bytes_written,
+                               result))
         {
             return result;
         }

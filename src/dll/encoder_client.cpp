@@ -21,6 +21,7 @@ namespace cinemania::dll
 namespace
 {
 constexpr std::size_t kQueueBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaxAudioBytes = 1024U * 1024U;
 constexpr DWORD kDeadlineMs = 30000;
 
 std::array<std::byte, protocol::kHeaderBytes> header(protocol::MessageType type,
@@ -111,6 +112,10 @@ public:
 
     bool start(const EncoderConfig& config);
     bool submit(std::span<const std::byte> pixels);
+    bool end_video();
+    bool set_audio_format(const EncoderAudioFormat& format);
+    bool
+    submit_audio(std::uint64_t start_sample, std::uint32_t count, std::span<const std::byte> pcm);
     EncoderResult finish();
     void cancel();
     EncoderResult snapshot() const;
@@ -132,8 +137,15 @@ private:
     DWORD
     read_status(protocol::Header& message, std::span<std::byte> storage, std::uint64_t expected);
     bool accept_ready();
-    bool accept_progress(std::span<const std::byte> payload, std::uint64_t& previous);
-    void accept_result(std::span<const std::byte> payload);
+    bool accept_progress(std::span<const std::byte> payload,
+                         std::uint64_t& previous_video,
+                         std::uint64_t& previous_audio);
+    bool enqueue(protocol::MessageType type,
+                 std::span<const std::byte> prefix,
+                 std::span<const std::byte> payload = {});
+    void accept_result(std::span<const std::byte> payload,
+                       std::uint64_t previous_video,
+                       std::uint64_t previous_audio);
     DWORD send(protocol::MessageType type, std::span<const std::byte> payload);
     void join();
     void cleanup();
@@ -145,13 +157,35 @@ private:
     std::condition_variable changed_;
 
     // Queue and lifecycle state shared by the producer and worker threads.
-    std::vector<std::vector<std::byte>> slots_;
+    struct Slot
+    {
+        std::vector<std::byte> bytes;
+        std::size_t size = 0;
+        protocol::MessageType type = protocol::MessageType::video_frame;
+    };
+    enum class Phase
+    {
+        video,
+        audio_format,
+        audio,
+        finishing
+    };
+    std::vector<Slot> slots_;
     std::size_t head_ = 0;
     std::size_t queued_ = 0;
     std::size_t frame_bytes_ = 0;
     std::uint64_t session_ = 0;
     std::uint64_t sequence_ = 0;
+    // Counts and progress are shared with the status thread under mutex_.
     std::uint64_t frames_ = 0;
+    std::uint64_t samples_ = 0;
+    std::uint64_t progress_generation_ = 0;
+
+    // The producer alone changes the phase, format and next sample position.
+    std::uint64_t next_sample_ = 0;
+    std::uint32_t audio_alignment_ = 0;
+    bool audio_expected_ = false;
+    Phase phase_ = Phase::video;
 
     bool ready_ = false;
     bool closing_ = false;
@@ -250,10 +284,13 @@ bool EncoderClient::Impl::start(const EncoderConfig& config)
     }
 
     frame_bytes_ = static_cast<std::size_t>(bytes);
-    slots_.resize((std::min)(std::size_t{8}, kQueueBytes / (frame_bytes_ + 8)));
+    audio_expected_ = config.audio_expected;
+    const std::size_t slot_bytes =
+        audio_expected_ ? (std::max)(frame_bytes_ + 8, kMaxAudioBytes + 12) : frame_bytes_ + 8;
+    slots_.resize((std::min)(std::size_t{8}, kQueueBytes / slot_bytes));
     for (auto& slot : slots_)
     {
-        slot.resize(frame_bytes_ + 8);
+        slot.bytes.resize(slot_bytes);
     }
 
     std::string destination;
@@ -305,7 +342,7 @@ bool EncoderClient::Impl::start(const EncoderConfig& config)
     protocol::append_u32(begin, config.stride);
     protocol::append_u32(begin, config.crf);
     protocol::append_u32(begin, config.threads);
-    protocol::append_u32(begin, 0);
+    protocol::append_u32(begin, config.audio_expected ? 1U : 0U);
     protocol::append_u32(begin, static_cast<std::uint32_t>(destination.size()));
     for (const char character : destination)
     {
@@ -350,14 +387,10 @@ bool EncoderClient::Impl::start(const EncoderConfig& config)
     return true;
 }
 
-bool EncoderClient::Impl::submit(std::span<const std::byte> pixels)
+bool EncoderClient::Impl::enqueue(protocol::MessageType type,
+                                  std::span<const std::byte> prefix,
+                                  std::span<const std::byte> payload)
 {
-    if (pixels.size() != frame_bytes_)
-    {
-        fail(ERROR_INVALID_PARAMETER, "video frame size does not match format");
-        return false;
-    }
-
     std::unique_lock lock(mutex_);
     if (!changed_.wait_for(lock,
                            std::chrono::milliseconds(kDeadlineMs),
@@ -368,7 +401,7 @@ bool EncoderClient::Impl::submit(std::span<const std::byte> pixels)
                            }))
     {
         lock.unlock();
-        fail(ERROR_TIMEOUT, "encoder frame queue stalled");
+        fail(ERROR_TIMEOUT, "encoder input queue stalled");
         return false;
     }
     if (terminal_ || closing_ || cancel_requested_ || !ready_)
@@ -377,19 +410,122 @@ bool EncoderClient::Impl::submit(std::span<const std::byte> pixels)
     }
 
     auto& slot = slots_[(head_ + queued_) % slots_.size()];
-    for (std::size_t index = 0; index < 8; ++index)
+    slot.type = type;
+    slot.size = prefix.size() + payload.size();
+    std::memcpy(slot.bytes.data(), prefix.data(), prefix.size());
+    if (!payload.empty())
     {
-        slot[index] = static_cast<std::byte>((frames_ >> (index * 8)) & 0xffU);
+        std::memcpy(slot.bytes.data() + prefix.size(), payload.data(), payload.size());
     }
 
-    std::memcpy(slot.data() + 8, pixels.data(), pixels.size());
-    ++frames_;
     ++queued_;
-
     lock.unlock();
     changed_.notify_all();
 
     return true;
+}
+
+bool EncoderClient::Impl::submit(std::span<const std::byte> pixels)
+{
+    if (phase_ != Phase::video || pixels.size() != frame_bytes_ ||
+        frames_ == (std::numeric_limits<std::uint64_t>::max)())
+    {
+        fail(ERROR_INVALID_PARAMETER, "invalid video frame or input phase");
+        return false;
+    }
+
+    std::array<std::byte, 8> index{};
+    for (std::size_t i = 0; i < index.size(); ++i)
+    {
+        index[i] = static_cast<std::byte>((frames_ >> (i * 8)) & 0xffU);
+    }
+
+    // Publish the count before enqueueing so status validation sees every queued item.
+    {
+        std::lock_guard lock(mutex_);
+        ++frames_;
+    }
+
+    return enqueue(protocol::MessageType::video_frame, index, pixels);
+}
+
+bool EncoderClient::Impl::end_video()
+{
+    if (phase_ != Phase::video || frames_ == 0)
+    {
+        fail(ERROR_INVALID_STATE, "video input cannot end in this phase");
+        return false;
+    }
+
+    std::vector<std::byte> count;
+    protocol::append_u64(count, frames_);
+    if (!enqueue(protocol::MessageType::end_video, count))
+    {
+        return false;
+    }
+
+    phase_ = audio_expected_ ? Phase::audio_format : Phase::finishing;
+    return true;
+}
+
+bool EncoderClient::Impl::set_audio_format(const EncoderAudioFormat& format)
+{
+    constexpr std::array<std::uint32_t, 12> rates = {
+        8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000};
+    if (phase_ != Phase::audio_format || format.channels < 1 || format.channels > 2 ||
+        std::find(rates.begin(), rates.end(), format.sample_rate) == rates.end())
+    {
+        fail(ERROR_INVALID_PARAMETER, "invalid audio format or input phase");
+        return false;
+    }
+
+    audio_alignment_ = format.channels * 2;
+    std::vector<std::byte> bytes;
+    protocol::append_u32(bytes, format.sample_rate);
+    protocol::append_u32(bytes, format.channels);
+    protocol::append_u32(bytes, 16);
+    protocol::append_u32(bytes, audio_alignment_);
+
+    if (!enqueue(protocol::MessageType::audio_format, bytes))
+    {
+        return false;
+    }
+
+    phase_ = Phase::audio;
+    return true;
+}
+
+bool EncoderClient::Impl::submit_audio(std::uint64_t start_sample,
+                                       std::uint32_t count,
+                                       std::span<const std::byte> pcm)
+{
+    if (phase_ != Phase::audio || count == 0 ||
+        static_cast<std::uint64_t>(count) * audio_alignment_ != pcm.size() ||
+        pcm.size() > kMaxAudioBytes || start_sample > (std::uint64_t{1} << 40) - count ||
+        samples_ > (std::numeric_limits<std::uint64_t>::max)() - count ||
+        (samples_ != 0 && start_sample != next_sample_))
+    {
+        fail(ERROR_INVALID_PARAMETER, "invalid audio samples or input phase");
+        return false;
+    }
+
+    std::array<std::byte, 12> prefix{};
+    for (std::size_t i = 0; i < 8; ++i)
+    {
+        prefix[i] = static_cast<std::byte>((start_sample >> (i * 8)) & 0xffU);
+    }
+    for (std::size_t i = 0; i < 4; ++i)
+    {
+        prefix[8 + i] = static_cast<std::byte>((count >> (i * 8)) & 0xffU);
+    }
+
+    {
+        std::lock_guard lock(mutex_);
+        samples_ += count;
+        next_sample_ = start_sample + count;
+    }
+
+    return enqueue(protocol::MessageType::audio_samples, prefix, pcm);
 }
 
 void EncoderClient::Impl::send_loop()
@@ -416,14 +552,15 @@ void EncoderClient::Impl::send_loop()
             auto& slot = slots_[head_];
             lock.unlock();
 
-            const DWORD error = send(protocol::MessageType::video_frame, slot);
+            const DWORD error =
+                send(slot.type, std::span<const std::byte>(slot.bytes.data(), slot.size));
             if (error != ERROR_SUCCESS)
             {
                 if (cancellation_requested())
                 {
                     return;
                 }
-                fail(error, "cannot send video frame");
+                fail(error, "cannot send encoder input");
                 return;
             }
 
@@ -435,13 +572,7 @@ void EncoderClient::Impl::send_loop()
             changed_.notify_all();
         }
 
-        std::vector<std::byte> count;
-        protocol::append_u64(count, frames_);
-        DWORD error = send(protocol::MessageType::end_video, count);
-        if (error == ERROR_SUCCESS)
-        {
-            error = send(protocol::MessageType::finish, {});
-        }
+        const DWORD error = send(protocol::MessageType::finish, {});
         if (error != ERROR_SUCCESS && !cancellation_requested())
         {
             fail(error, "cannot finish video input");
@@ -491,30 +622,37 @@ bool EncoderClient::Impl::accept_ready()
 }
 
 bool EncoderClient::Impl::accept_progress(std::span<const std::byte> payload,
-                                          std::uint64_t& previous)
+                                          std::uint64_t& previous_video,
+                                          std::uint64_t& previous_audio)
 {
     std::size_t offset = 0;
     std::uint64_t video = 0;
     std::uint64_t audio = 0;
     if (payload.size() != 16 || !protocol::read_u64(payload, offset, video) ||
-        !protocol::read_u64(payload, offset, audio) || audio != 0 || video < previous)
+        !protocol::read_u64(payload, offset, audio) || video < previous_video ||
+        audio < previous_audio)
     {
         return false;
     }
 
     {
         std::lock_guard lock(mutex_);
-        if (!ready_ || video > frames_)
+        if (!ready_ || video > frames_ || audio > samples_)
         {
             return false;
         }
+        ++progress_generation_;
     }
+    changed_.notify_all();
 
-    previous = video;
+    previous_video = video;
+    previous_audio = audio;
     return true;
 }
 
-void EncoderClient::Impl::accept_result(std::span<const std::byte> payload)
+void EncoderClient::Impl::accept_result(std::span<const std::byte> payload,
+                                        std::uint64_t previous_video,
+                                        std::uint64_t previous_audio)
 {
     std::size_t offset = 0;
     std::uint32_t outcome = 0;
@@ -550,13 +688,25 @@ void EncoderClient::Impl::accept_result(std::span<const std::byte> payload)
             return;
         }
 
+        if (video < previous_video || audio < previous_audio || video > frames_ || audio > samples_)
+        {
+            result_.outcome = EncoderOutcome::failed;
+            result_.system_code = ERROR_INVALID_DATA;
+            result_.diagnostic = "worker reported invalid accepted counts; destination may exist";
+            terminal_ = true;
+            failed_.store(true);
+            changed_.notify_all();
+            return;
+        }
+
         result_.outcome = outcome == 0
                               ? EncoderOutcome::success
                               : (outcome == 1 ? EncoderOutcome::cancelled : EncoderOutcome::failed);
         result_.system_code = code;
         result_.diagnostic.assign(reinterpret_cast<const char*>(payload.data() + offset), length);
 
-        if (outcome == 0 && (!ready_ || video == 0 || video != frames_ || audio != 0 || !closing_))
+        if (outcome == 0 &&
+            (!ready_ || video == 0 || video != frames_ || audio != samples_ || !closing_))
         {
             result_.outcome = EncoderOutcome::failed;
             result_.diagnostic = "worker reported inconsistent output; destination may exist";
@@ -575,6 +725,7 @@ void EncoderClient::Impl::status_loop()
     {
         std::uint64_t expected = 0;
         std::uint64_t progress_frames = 0;
+        std::uint64_t progress_samples = 0;
         std::array<std::byte, 4128> storage{};
 
         for (;;)
@@ -593,14 +744,14 @@ void EncoderClient::Impl::status_loop()
             const auto payload = std::span<const std::byte>(storage.data(), message.payload_bytes);
             if (message.type == protocol::MessageType::result)
             {
-                accept_result(payload);
+                accept_result(payload, progress_frames, progress_samples);
                 return;
             }
 
             const bool valid_ready =
                 message.type == protocol::MessageType::ready && payload.empty() && accept_ready();
             const bool valid_progress = message.type == protocol::MessageType::progress &&
-                                        accept_progress(payload, progress_frames);
+                                        accept_progress(payload, progress_frames, progress_samples);
             if (!valid_ready && !valid_progress)
             {
                 fail(ERROR_INVALID_DATA, "unexpected or invalid worker status");
@@ -649,6 +800,23 @@ void EncoderClient::Impl::cleanup()
 
 EncoderResult EncoderClient::Impl::finish()
 {
+    if (phase_ == Phase::video && !audio_expected_)
+    {
+        static_cast<void>(end_video());
+    }
+    if (phase_ == Phase::audio && samples_ != 0)
+    {
+        std::vector<std::byte> count;
+        protocol::append_u64(count, samples_);
+        if (enqueue(protocol::MessageType::end_audio, count))
+        {
+            phase_ = Phase::finishing;
+        }
+    }
+    if (phase_ != Phase::finishing)
+    {
+        fail(ERROR_INVALID_STATE, "required encoder input is incomplete");
+    }
     {
         std::unique_lock lock(mutex_);
         if (!started_)
@@ -663,12 +831,21 @@ EncoderResult EncoderClient::Impl::finish()
 
     changed_.notify_all();
     std::unique_lock lock(mutex_);
-    const bool completed = changed_.wait_for(lock,
-                                             std::chrono::seconds(60),
-                                             [this]
-                                             {
-                                                 return terminal_;
-                                             });
+    bool completed = terminal_;
+    while (!completed)
+    {
+        const auto generation = progress_generation_;
+        if (!changed_.wait_for(lock,
+                               std::chrono::seconds(60),
+                               [this, generation]
+                               {
+                                   return terminal_ || progress_generation_ != generation;
+                               }))
+        {
+            break;
+        }
+        completed = terminal_;
+    }
     lock.unlock();
 
     if (!completed)
@@ -767,6 +944,47 @@ bool EncoderClient::submit_frame(std::span<const std::byte> pixels)
     try
     {
         return impl_->submit(pixels);
+    }
+    catch (...)
+    {
+        impl_->exception_failure();
+        return false;
+    }
+}
+
+bool EncoderClient::end_video()
+{
+    try
+    {
+        return impl_->end_video();
+    }
+    catch (...)
+    {
+        impl_->exception_failure();
+        return false;
+    }
+}
+
+bool EncoderClient::set_audio_format(const EncoderAudioFormat& format)
+{
+    try
+    {
+        return impl_->set_audio_format(format);
+    }
+    catch (...)
+    {
+        impl_->exception_failure();
+        return false;
+    }
+}
+
+bool EncoderClient::submit_audio(std::uint64_t start_sample,
+                                 std::uint32_t sample_count,
+                                 std::span<const std::byte> pcm)
+{
+    try
+    {
+        return impl_->submit_audio(start_sample, sample_count, pcm);
     }
     catch (...)
     {

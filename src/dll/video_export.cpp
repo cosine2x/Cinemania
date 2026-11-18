@@ -1,5 +1,6 @@
 #include "game_export.hpp"
 
+#include "audio_export.hpp"
 #include "video_export_internal.hpp"
 
 #include <climits>
@@ -39,6 +40,11 @@ bool create_stream(PAVIFILE file, PAVISTREAM* stream, AVISTREAMINFOW* info, HRES
         return true;
     }
 
+    if (info && info->fccType == streamtypeAUDIO)
+    {
+        return detail::create_audio_stream(session, stream, info, result);
+    }
+
     if (!stream || !info || info->fccType != streamtypeVIDEO || !info->dwRate || !info->dwScale ||
         session->state != State::preparing || session->streams != 0 || info->rcFrame.left != 0 ||
         info->rcFrame.top != 0 || info->rcFrame.right < 2 || info->rcFrame.bottom < 2 ||
@@ -62,6 +68,7 @@ bool create_stream(PAVIFILE file, PAVISTREAM* stream, AVISTREAMINFOW* info, HRES
     session->rate = info->dwRate;
     session->scale = info->dwScale;
     session->streams = 1;
+    session->video_streams = 1;
     *stream = reinterpret_cast<PAVISTREAM>(token);
     result = AVIERR_OK;
     return true;
@@ -140,6 +147,7 @@ bool make_compressed(PAVISTREAM* output,
 
     *output = reinterpret_cast<PAVISTREAM>(token);
     ++session->streams;
+    ++session->video_streams;
     result = AVIERR_OK;
     return true;
 }
@@ -147,7 +155,12 @@ bool make_compressed(PAVISTREAM* output,
 bool set_format(PAVISTREAM stream, LONG position, LPVOID format, LONG bytes, HRESULT& result)
 {
     bool synthetic = false;
-    auto session = lookup(stream, Kind::compressed, synthetic);
+    auto session = lookup(stream, Kind::audio, synthetic);
+    if (session)
+    {
+        return detail::set_audio_format(session, position, format, bytes, result);
+    }
+    session = lookup(stream, Kind::compressed, synthetic);
     if (!synthetic)
     {
         return false;
@@ -189,6 +202,7 @@ bool set_format(PAVISTREAM stream, LONG position, LPVOID format, LONG bytes, HRE
     config.rate = session->rate;
     config.scale = session->scale;
     config.stride = stride;
+    config.audio_expected = session->audio_expected;
     session->encoder = std::make_unique<dll::EncoderClient>();
     session->producer = GetCurrentThreadId();
     if (!session->encoder->start(config))
@@ -208,12 +222,19 @@ bool write(PAVISTREAM stream,
            LONG samples,
            LPVOID buffer,
            LONG bytes,
+           DWORD flags,
            LONG* samples_written,
            LONG* bytes_written,
            HRESULT& result)
 {
     bool synthetic = false;
-    auto session = lookup(stream, Kind::compressed, synthetic);
+    auto session = lookup(stream, Kind::audio, synthetic);
+    if (session)
+    {
+        return detail::write_audio(
+            session, start, samples, buffer, bytes, flags, samples_written, bytes_written, result);
+    }
+    session = lookup(stream, Kind::compressed, synthetic);
     if (!synthetic)
     {
         return false;
@@ -230,9 +251,10 @@ bool write(PAVISTREAM stream,
     }
 
     result = AVIERR_ERROR;
-    if (!valid_producer(session) || session->state != State::recording || !buffer || samples != 1 ||
-        bytes < 0 || static_cast<std::size_t>(bytes) != session->frame_bytes ||
-        start != session->next_frame || session->next_frame == LONG_MAX)
+    if (!valid_producer(session) || session->state != State::recording || session->video_ended ||
+        !buffer || samples != 1 || bytes < 0 ||
+        static_cast<std::size_t>(bytes) != session->frame_bytes || start != session->next_frame ||
+        session->next_frame == LONG_MAX)
     {
         fail(session);
         return true;
@@ -261,23 +283,46 @@ bool write(PAVISTREAM stream,
 bool stream_release(PAVISTREAM stream, ULONG& result)
 {
     std::shared_ptr<Session> session;
-    if (release_token(stream, Kind::compressed, session))
+    if (!release_token(stream, Kind::audio, session))
     {
-        if (!session)
-        {
-            // A raw token also belongs to the synthetic namespace.
-            release_token(stream, Kind::raw, session);
-        }
-
-        if (owned(session) && session->streams > 0)
-        {
-            --session->streams;
-        }
-        result = 0;
-        return true;
+        return false;
     }
 
-    return false;
+    bool video = false;
+    if (!session)
+    {
+        release_token(stream, Kind::compressed, session);
+        video = session != nullptr;
+    }
+    if (!session)
+    {
+        release_token(stream, Kind::raw, session);
+        video = session != nullptr;
+    }
+
+    FailureOnException failure_guard(session);
+    if (owned(session) && session->streams > 0)
+    {
+        --session->streams;
+        if (video && session->video_streams > 0)
+        {
+            --session->video_streams;
+            if (session->video_streams == 0 && session->audio_expected && !session->video_ended &&
+                session->state == State::recording)
+            {
+                if (!valid_producer(session) || !session->encoder->end_video())
+                {
+                    fail(session);
+                }
+                else
+                {
+                    session->video_ended = true;
+                }
+            }
+        }
+    }
+    result = 0;
+    return true;
 }
 
 bool file_release(PAVIFILE file, ULONG& result)
@@ -300,7 +345,8 @@ bool file_release(PAVIFILE file, ULONG& result)
         fail(session);
     }
 
-    if (session->state == State::recording && session->streams == 0 && valid_producer(session))
+    if (session->state == State::recording && session->streams == 0 && valid_producer(session) &&
+        (!session->audio_expected || (session->video_ended && session->audio_formatted)))
     {
         const auto outcome = session->encoder->finish();
         if (outcome.outcome == dll::EncoderOutcome::success)
@@ -325,6 +371,7 @@ bool file_release(PAVIFILE file, ULONG& result)
         fail(session);
     }
 
+    detail::log_audio_outcome(*session);
     session->encoder.reset();
     return true;
 }

@@ -1,5 +1,7 @@
 #include "game_export.hpp"
 
+#include "openal_capture.hpp"
+#include "openal_capture_hooks.hpp"
 #include "video_export_internal.hpp"
 
 #include <atomic>
@@ -28,6 +30,15 @@ std::uintptr_t base()
 std::uint32_t word(void* object, std::size_t offset)
 {
     return *reinterpret_cast<std::uint32_t*>(static_cast<std::byte*>(object) + offset);
+}
+
+std::shared_ptr<Session> current_session()
+{
+    if (!invocation || !invocation->key_)
+    {
+        return {};
+    }
+    return find_session(invocation->shooter_, invocation->key_);
 }
 
 enum class PathStatus
@@ -161,7 +172,7 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
     }
 
     auto* settings = reinterpret_cast<void*>(detail::word(detail::invocation->shooter_, 0x4c));
-    if (!settings || detail::word(settings, 0x34) != 0)
+    if (!settings)
     {
         return false;
     }
@@ -172,6 +183,7 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
     session->shooter = detail::invocation->shooter_;
     session->fiber = fiber;
     session->owner = GetCurrentThreadId();
+    session->audio_expected = detail::word(settings, 0x34) != 0;
     if (!detail::register_session(session))
     {
         result = 0;
@@ -181,6 +193,13 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
     detail::clear_emergency(detail::invocation->shooter_, fiber);
     FailureOnException failure_guard(session);
     result = 0;
+
+    if (session->audio_expected && !openal_capture_hooks::prepare_mixer())
+    {
+        audio_capture::record_failure(*session, detail::CaptureFailure::source);
+        detail::fail(session);
+        return true;
+    }
 
     auto* game_path = static_cast<detail::WideString*>(path);
     if (!game_path->text || game_path->length == 0 || game_path->length > 32760 ||
@@ -251,17 +270,18 @@ unsigned int abort_result(void* shooter, unsigned int original)
     {
         detail::fail(session);
     }
+    if (session->encoder && session->state == State::recording && session->encoder->has_failed())
+    {
+        detail::fail(session);
+    }
     if (original && session->state != State::failed)
     {
+        audio_capture::detach(session);
         session->state = State::cancelled;
         if (session->encoder)
         {
             session->encoder->cancel();
         }
-    }
-    if (session->encoder && session->state == State::recording && session->encoder->has_failed())
-    {
-        detail::fail(session);
     }
     return original || session->state == State::failed;
 }

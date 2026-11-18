@@ -1,6 +1,7 @@
 #include "video_export_internal.hpp"
 
 #include "native_render_ahead.hpp"
+#include "openal_capture.hpp"
 
 #include <algorithm>
 #include <array>
@@ -106,8 +107,7 @@ bool emergency_failure(void* shooter, void* fiber) noexcept
         return false;
     }
 
-    const auto* settings = reinterpret_cast<const std::byte*>(settings_address);
-    return *reinterpret_cast<const std::uint32_t*>(settings + 0x34) == 0;
+    return true;
 }
 
 void clear_emergency(void* shooter, void* fiber) noexcept
@@ -186,6 +186,7 @@ void retire(void* shooter, void* fiber)
     }
 
     native_render_ahead::retire(session);
+    audio_capture::detach(session);
     Registry& state = registry();
     {
         std::lock_guard lock(state.mutex);
@@ -222,7 +223,9 @@ std::shared_ptr<Session> lookup(void* handle, Kind kind, bool& synthetic)
     std::lock_guard lock(state.mutex);
 
     Token* token = token_for(handle);
-    synthetic = token != nullptr;
+    const auto value = reinterpret_cast<std::uintptr_t>(handle);
+    const auto begin = reinterpret_cast<std::uintptr_t>(state.tokens.data());
+    synthetic = value >= begin && value < begin + sizeof(state.tokens);
     if (!token || token->released || token->kind != kind)
     {
         return {};
@@ -254,7 +257,9 @@ bool release_token(void* handle, Kind kind, std::shared_ptr<Session>& session)
     Token* token = token_for(handle);
     if (!token)
     {
-        return false;
+        const auto value = reinterpret_cast<std::uintptr_t>(handle);
+        const auto begin = reinterpret_cast<std::uintptr_t>(state.tokens.data());
+        return value >= begin && value < begin + sizeof(state.tokens);
     }
 
     if (!token->released && token->kind == kind)
@@ -309,13 +314,40 @@ void describe_failure(Session& session, const dll::EncoderResult& failure) noexc
 
 void fail(const std::shared_ptr<Session>& session)
 {
-    if (owned(session) && session->state != State::cancelled)
+    if (owned(session) && session->state != State::cancelled && session->state != State::failed)
     {
+        audio_capture::detach(session);
         session->state = State::failed;
         if (session->encoder)
         {
             describe_failure(*session, session->encoder->failure());
             session->encoder->cancel();
+        }
+        const wchar_t* capture_detail = nullptr;
+        switch (session->capture_failure.load())
+        {
+            case CaptureFailure::source:
+                capture_detail = L"Unsupported OpenAL mixer, playback context, or audio format";
+                break;
+            case CaptureFailure::queue:
+                capture_detail = L"OpenAL mixer audio queue overflow or invalid block";
+                break;
+            case CaptureFailure::overlap:
+                capture_detail = L"Concurrent OpenAL mixer callbacks";
+                break;
+            case CaptureFailure::api:
+                capture_detail = L"OpenAL capture device operation failed";
+                break;
+            case CaptureFailure::volume:
+                capture_detail = L"Sound volume capture or restoration failed";
+                break;
+            case CaptureFailure::none:
+                break;
+        }
+        if (capture_detail)
+        {
+            _snwprintf_s(
+                session->failure_text, _TRUNCATE, L"Video export failed: %ls.", capture_detail);
         }
     }
 }

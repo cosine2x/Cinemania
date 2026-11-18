@@ -15,7 +15,8 @@ enum class Kind
 {
     file,
     raw,
-    compressed
+    compressed,
+    audio
 };
 enum class State
 {
@@ -24,6 +25,15 @@ enum class State
     failed,
     cancelled,
     success
+};
+enum class CaptureFailure
+{
+    none,
+    source,
+    queue,
+    overlap,
+    api,
+    volume
 };
 
 // Mutable fields belong to the Open thread. Registry lookups retain shared leases;
@@ -39,6 +49,7 @@ struct Session
     DWORD producer = 0;
     DWORD owner = 0;
     std::atomic<bool> foreign_failure = false;
+    std::atomic<CaptureFailure> capture_failure = CaptureFailure::none;
 
     wchar_t failure_text[512] = L"Video export failed. Check the destination for any output.";
 
@@ -59,12 +70,22 @@ struct Session
     std::size_t frame_bytes = 0;
     LONG next_frame = 0;
     unsigned int streams = 0;
+    unsigned int video_streams = 0;
+    bool audio_expected = false;
+    bool video_ended = false;
+    bool audio_created = false;
+    bool audio_formatted = false;
+    std::uint32_t audio_rate = 0;
+    std::uint32_t audio_scale = 0;
+    LONG next_audio = 0;
+    std::uint64_t audio_samples = 0;
 };
 
 void record_emergency(void* shooter, void* fiber) noexcept;
 bool emergency_failure(void* shooter, void* fiber) noexcept;
 void clear_emergency(void* shooter, void* fiber) noexcept;
 std::shared_ptr<Session> find_session(void* shooter, void* fiber);
+std::shared_ptr<Session> current_session();
 std::shared_ptr<Session> find_render_ahead_viewport(void* viewport);
 bool bind_render_ahead_viewport(const std::shared_ptr<Session>& session, void* viewport);
 void unbind_render_ahead_viewport(const std::shared_ptr<Session>& session);

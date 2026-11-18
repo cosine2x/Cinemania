@@ -136,7 +136,8 @@ public:
     void close_stdin();
     [[nodiscard]] NativeError close();
     HANDLE process_handle() const;
-    [[nodiscard]] EncoderResult finish(StopState& stop, Deadline deadline);
+    [[nodiscard]] EncoderResult
+    finish(StopState& stop, Deadline deadline, const std::function<NativeError()>& progress = {});
 
 private:
     struct Impl;

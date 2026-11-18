@@ -896,7 +896,9 @@ HANDLE EncoderProcess::process_handle() const
     return impl_->process.get();
 }
 
-EncoderResult EncoderProcess::finish(StopState& stop, Deadline deadline)
+EncoderResult EncoderProcess::finish(StopState& stop,
+                                     Deadline deadline,
+                                     const std::function<NativeError()>& progress_callback)
 {
     EncoderResult result;
     close_stdin();
@@ -908,31 +910,45 @@ EncoderResult EncoderProcess::finish(StopState& stop, Deadline deadline)
     HANDLE waits[] = {impl_->process.get(), stop.event()};
     const auto started = std::chrono::steady_clock::now();
     const auto idle_limit = deadline > started ? deadline - started : Deadline::duration::zero();
+    auto last_reported = started;
     DWORD waited = WAIT_TIMEOUT;
     for (;;)
     {
-        waited = WaitForMultipleObjects(2, waits, FALSE, wait_milliseconds(deadline));
-        if (waited != WAIT_TIMEOUT || deadline == Deadline::max())
+        const auto poll_deadline =
+            progress_callback
+                ? (std::min)(deadline, std::chrono::steady_clock::now() + std::chrono::seconds(1))
+                : deadline;
+        waited = WaitForMultipleObjects(2, waits, FALSE, wait_milliseconds(poll_deadline));
+        if (waited != WAIT_TIMEOUT)
         {
             break;
         }
         const auto timestamp = std::chrono::nanoseconds(impl_->progress_timestamp_ns.load());
         const Deadline progress(std::chrono::duration_cast<Deadline::duration>(timestamp));
-        if (progress <= started || idle_limit == Deadline::duration::zero())
+        if (progress_callback && progress > last_reported)
+        {
+            last_reported = progress;
+            result.error = progress_callback();
+            if (result.error)
+            {
+                break;
+            }
+        }
+        if (progress > started && idle_limit != Deadline::duration::zero() &&
+            deadline != Deadline::max())
+        {
+            const auto remaining = Deadline::max() - progress;
+            const Deadline next = idle_limit < remaining ? progress + idle_limit : Deadline::max();
+            deadline = (std::max)(deadline, next);
+        }
+        if (std::chrono::steady_clock::now() >= deadline)
         {
             break;
         }
-        const auto remaining = Deadline::max() - progress;
-        const Deadline next = idle_limit < remaining ? progress + idle_limit : Deadline::max();
-        if (next <= std::chrono::steady_clock::now())
-        {
-            break;
-        }
-        deadline = next;
     }
     if (waited != WAIT_OBJECT_0)
     {
-        if (waited == WAIT_OBJECT_0 + 1)
+        if (!result.error && waited == WAIT_OBJECT_0 + 1)
         {
             result.error = stop.error();
             if (!result.error)
@@ -940,7 +956,7 @@ EncoderResult EncoderProcess::finish(StopState& stop, Deadline deadline)
                 result.error = failure(ERROR_OPERATION_ABORTED, "encoder wait stopped");
             }
         }
-        else
+        else if (!result.error)
         {
             const DWORD code = waited == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError();
             result.error = failure(code, "wait for encoder failed");

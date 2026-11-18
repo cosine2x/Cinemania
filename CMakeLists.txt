@@ -35,6 +35,12 @@ else()
     target_include_directories(CinemaniaMinHook PUBLIC third_party/minhook/include)
     set_property(TARGET CinemaniaMinHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_library(Cinemania SHARED
+        src/dll/audio_export.cpp
+        src/dll/export_volume.cpp
+        src/dll/export_volume_bridges.cpp
+        src/dll/mixer_pcm_buffer.cpp
+        src/dll/openal_capture.cpp
+        src/dll/openal_capture_hooks.cpp
         src/dll/bootstrap.cpp
         src/dll/bootstrap_diagnostics.cpp
         src/dll/executable_check.cpp
