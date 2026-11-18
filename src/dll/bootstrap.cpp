@@ -3,6 +3,10 @@
 #include "game_export.hpp"
 #include "passthrough_hooks.hpp"
 
+#if defined(CINEMANIA_DEFERRED_READBACK)
+#include "deferred_readback.hpp"
+#endif
+
 #include <windows.h>
 
 namespace
@@ -21,6 +25,9 @@ DWORD WINAPI bootstrap(void*)
             if (hooks.success && hooks.installed == expected_hooks && !hooks.residual)
             {
                 cinemania::game_export::enable_video_routing();
+#if defined(CINEMANIA_DEFERRED_READBACK)
+                cinemania::readback::enable();
+#endif
             }
         }
 

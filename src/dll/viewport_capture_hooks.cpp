@@ -2,6 +2,10 @@
 
 #include "native_render_ahead.hpp"
 
+#if defined(CINEMANIA_DEFERRED_READBACK)
+#include "deferred_readback.hpp"
+#endif
+
 #include <cstddef>
 
 extern "C"
@@ -15,16 +19,26 @@ extern "C"
     int __cdecl cinemania_capture_callback(void* viewport) noexcept
     {
         cinemania::native_render_ahead::capture(viewport);
+#if defined(CINEMANIA_DEFERRED_READBACK)
+        return cinemania::readback::capture(viewport) ? 1 : 0;
+#else
         return 0;
+#endif
     }
 
     void __cdecl cinemania_cleanup_callback(void* viewport) noexcept
     {
+#if defined(CINEMANIA_DEFERRED_READBACK)
+        cinemania::readback::cleanup(viewport);
+#endif
         cinemania::native_render_ahead::cleanup(viewport);
     }
 
     void __cdecl cinemania_device_callback(void* viewport) noexcept
     {
+#if defined(CINEMANIA_DEFERRED_READBACK)
+        cinemania::readback::device_change(viewport);
+#endif
         cinemania::native_render_ahead::device_change(viewport);
     }
 }
