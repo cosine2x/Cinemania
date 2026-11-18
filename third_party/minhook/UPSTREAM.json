@@ -20,5 +20,5 @@
     "src/trampoline.c": "f13a169f803ff5a8e45c58ce668b4377a9878c0fc4452369b8a1325065186b2b",
     "src/trampoline.h": "53ed9934492320617a27bfd952ffe7f5b7a4a1d09963d4512447082fe7b727b4"
   },
-  "local_modifications": "None; selected source/header/license files only. Not built or linked."
+  "local_modifications": "None; selected source/header/license files only."
 }

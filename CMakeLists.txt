@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Cinemania LANGUAGES CXX)
+project(Cinemania VERSION 0.1.0 LANGUAGES CXX)
 
 if(NOT WIN32 OR NOT MSVC)
     message(FATAL_ERROR "Cinemania requires Windows and the MSVC toolchain.")

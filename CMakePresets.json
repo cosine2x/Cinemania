@@ -1,0 +1,37 @@
+{
+    "version": 2,
+    "configurePresets": [
+        {
+            "name": "windows-x86",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/x86",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CINEMANIA_BUILD_WORKER": "OFF",
+                "CINEMANIA_DEFERRED_READBACK": "ON",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG",
+                "CMAKE_C_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG"
+            }
+        },
+        {
+            "name": "windows-x64-worker",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/x64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CINEMANIA_BUILD_WORKER": "ON",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows-x86-release",
+            "configurePreset": "windows-x86"
+        },
+        {
+            "name": "windows-x64-worker-release",
+            "configurePreset": "windows-x64-worker"
+        }
+    ]
+}
