@@ -2,8 +2,8 @@
 """Build a verified Cinemania package from explicit Release binaries.
 
 The FFmpeg binary is not hosted yet: supply the trusted pinned binary via
---ffmpeg. Matching dependency sources and build recipe remain required before
-binary distribution. This tool never downloads or builds FFmpeg.
+--ffmpeg. A separate dependency source bundle is prepared by source_bundle.py.
+This tool never downloads or builds FFmpeg.
 """
 
 import argparse
@@ -22,6 +22,18 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 FFMPEG_SHA256 = "efecdb39e828868bb71999dd3de914ba35d70aa535ca10e55d140a71d389dc34"
 FFMPEG_SIZE = 6032398
+PACKAGE_LICENSE_FILES = {
+    "LICENSE": "LICENSE",
+    "licenses/MinHook-LICENSE.txt": "third_party/minhook/LICENSE.txt",
+    "licenses/FFmpeg-GPL-2.0.txt": "licenses/FFmpeg-GPL-2.0.txt",
+    "licenses/DEPENDENCIES.md": "licenses/DEPENDENCIES.md",
+    "licenses/MinGW-w64-runtime.txt": "licenses/MinGW-w64-runtime.txt",
+    "licenses/Winpthreads-LICENSE.txt": "licenses/Winpthreads-LICENSE.txt",
+    "licenses/Winpthreads-source-notices.txt": "licenses/Winpthreads-source-notices.txt",
+    "licenses/GCC-Runtime-Exception.txt": "licenses/GCC-Runtime-Exception.txt",
+    "licenses/GCC-GPL-3.0.txt": "licenses/GCC-GPL-3.0.txt",
+}
+PACKAGE_ENTRIES = frozenset((*PACKAGE_LICENSE_FILES, "Cinemania.dll", "bin/CinemaniaWorker.exe", "bin/ffmpeg.exe", "manifest.json"))
 
 
 def sha256(data):
@@ -196,10 +208,7 @@ def package(ffmpeg_path, output_root):
     inspect_pe(ffmpeg, 0x8664, False)
 
     entries = dict(binaries)
-    entries["LICENSE"] = (ROOT / "LICENSE").read_bytes()
-    entries["licenses/MinHook-LICENSE.txt"] = (ROOT / "third_party/minhook/LICENSE.txt").read_bytes()
-    entries["licenses/FFmpeg-GPL-2.0.txt"] = (ROOT / "licenses/FFmpeg-GPL-2.0.txt").read_bytes()
-    entries["licenses/DEPENDENCIES.md"] = (ROOT / "licenses/DEPENDENCIES.md").read_bytes()
+    entries.update({name: (ROOT / source).read_bytes() for name, source in PACKAGE_LICENSE_FILES.items()})
     manifest = {
         "version": version,
         "build": receipt,

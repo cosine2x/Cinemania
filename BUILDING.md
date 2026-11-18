@@ -22,6 +22,46 @@ identical inputs; MSVC binaries themselves are not promised reproducible.
 Normal builds do not build or download FFmpeg. The minimal binary has no public
 hosting location yet, so supply the trusted pinned executable explicitly. CI
 builds and uploads the DLL and worker only; it does not create a complete ZIP.
-Before any binary distribution, provide the matching dependency source archives
-and build recipe; the automatically generated Cinemania source archive does not
-include them. See `licenses/DEPENDENCIES.md` for hashes and provenance.
+Before distributing the binary, create the matching dependency source bundle
+from the pinned FFmpeg and x264 archives:
+
+```powershell
+python ./scripts/source_bundle.py --ffmpeg-source "C:/path/ffmpeg-9.0.2.tar.xz" --x264-source "C:/path/x264-source.tar" --output ./out/Cinemania-0.1.0/Cinemania-0.1.0-dependency-sources.zip
+```
+
+The script verifies both archive hashes and includes the build recipe. Upload
+this ZIP as a release asset alongside the binary ZIP; the automatically generated
+Cinemania source archive does not include these dependencies. See
+`licenses/DEPENDENCIES.md` for hashes and provenance.
+
+## TMLoader feed preparation
+
+After committing the release source, build and package from that clean commit.
+Generate the feed from the resulting ZIP:
+
+```powershell
+python ./scripts/modloader_feed.py ./out/Cinemania-0.1.0/Cinemania-0.1.0.zip
+```
+
+This writes a new `index.json` next to the ZIP, using its exact SHA-256. It
+checks the archive layout, binary hashes and PE architecture, manifest version,
+and clean source commit. To retain earlier releases, pass `--previous path/to/index.json`;
+the output must be a new file (`--output` selects another path). It refuses to
+replace an existing version with different metadata. The entry depends on
+`TmForever` 2.12.0, the supported executable baseline. Its proposed Release
+asset URL and feed server base are respectively
+`https://github.com/mediocre-q/Cinemania/releases/download/v0.1.0/Cinemania-0.1.0.zip`
+and `https://raw.githubusercontent.com/mediocre-q/Cinemania/master/modloader/`.
+These addresses are not yet published or verified. After the release assets are
+accessible, verify their downloaded bytes and redirects, then publish the
+resulting index as `modloader/index.json` on `master`. Test installation through
+TMLoader before announcing the feed; no new server or game configuration is
+changed by the generator.
+
+Once published, close TMLoader and add the following entry under `servers:` in
+its `config.yaml`, preserving any existing entries, then reopen TMLoader:
+
+```yaml
+servers:
+  - https://raw.githubusercontent.com/mediocre-q/Cinemania/master/modloader/
+```
