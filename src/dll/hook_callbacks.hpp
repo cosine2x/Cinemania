@@ -1,5 +1,7 @@
 #pragma once
 
+#include "hook_transaction.hpp"
+
 // clang-format off
 // Windows types must precede VfW declarations.
 #include <windows.h>
@@ -11,12 +13,16 @@ namespace cinemania::hook_callbacks
 using DoShoot = void(__thiscall*)(void*, void**);
 using Abort = unsigned int(__thiscall*)(void*);
 using Open = unsigned int(__thiscall*)(void*, void*);
-using Localize = const wchar_t*(__thiscall*)(void*, const wchar_t*);
+
+constexpr std::size_t kLocalizerRva = 0x502460;
+constexpr std::size_t kLocalizationHookCount = 6;
+
+void prepare_localization_hooks(unsigned char* image,
+                                std::span<EntryHook, kLocalizationHookCount> entries) noexcept;
 
 extern DoShoot do_shoot_original;
 extern Abort abort_original;
 extern Open open_original;
-extern Localize localize_original;
 extern decltype(&AVIFileRelease) file_release_original;
 extern decltype(&AVIStreamWrite) stream_write_original;
 extern decltype(&AVIStreamSetFormat) stream_set_format_original;
@@ -28,7 +34,6 @@ extern decltype(&AVIStreamRelease) stream_release_original;
 void __fastcall do_shoot(void* shooter, void*, void** fiber);
 unsigned int __fastcall abort_requested(void* shooter, void*);
 unsigned int __fastcall open_export(void* writer, void*, void* path);
-const wchar_t* __fastcall localize(void* localizer, void*, const wchar_t* key);
 ULONG WINAPI file_release(PAVIFILE file);
 HRESULT WINAPI stream_write(PAVISTREAM stream,
                             LONG start,

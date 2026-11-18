@@ -25,11 +25,10 @@ struct EntrySpec
     std::size_t length;
 };
 
-constexpr std::array<EntrySpec, 4> kEntries{{
+constexpr std::array<EntrySpec, 3> kEntries{{
     {0x2f4510, {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8}, 6},
     {0x2f4480, {0x8b, 0x49, 0x50, 0x8b, 0x49, 0x14}, 6},
     {0x55a150, {0x56, 0x8b, 0xf1, 0x8b, 0x46, 0x04}, 6},
-    {0x502460, {0x8b, 0x44, 0x24, 0x04, 0x66, 0x83, 0x38, 0x00}, 8},
 }};
 // Static bytes from the pinned 2.12.0 image: capture and stop inside
 // 009a4070, Reset at 0095c430, and resource teardown at 0095dba0.
@@ -39,7 +38,8 @@ constexpr std::array<EntrySpec, 4> kViewportEntries{{
     {0x55c430, {0x6a, 0xff, 0x68, 0xa0, 0x96, 0xae, 0x00}, 7},
     {0x55dba0, {0x83, 0xec, 0x10, 0x56, 0x8b, 0xf1}, 6},
 }};
-constexpr std::size_t kEntryCount = kEntries.size() + kViewportEntries.size() + 3;
+constexpr std::size_t kEntryCount =
+    kEntries.size() + kViewportEntries.size() + 3 + hook_callbacks::kLocalizationHookCount;
 // Native EVENT ring functions in the pinned 2.12.0 image.
 constexpr std::array<EntrySpec, 3> kRenderAheadFunctions{{
     {0x58bab0, {0x51, 0x57, 0x8b, 0xf9, 0x83, 0xbf, 0xf8, 0x09}, 8},
@@ -266,11 +266,6 @@ HookResult install_passthrough_hooks()
          original_address(callbacks::open_original),
          kEntries[2].bytes.data(),
          kEntries[2].length},
-        {base + kEntries[3].rva,
-         function_address(callbacks::localize),
-         original_address(callbacks::localize_original),
-         kEntries[3].bytes.data(),
-         kEntries[3].length},
         {base + viewport_entries[0].rva,
          function_address(cinemania_capture_bridge),
          &cinemania_capture_original,
@@ -292,6 +287,24 @@ HookResult install_passthrough_hooks()
          viewport_entries[3].bytes.data(),
          viewport_entries[3].length},
     }};
+    if (!in_image(callbacks::kLocalizerRva, 1, size) ||
+        !mapped_range(base + callbacks::kLocalizerRva, 1, base, true))
+    {
+        failure.stage = "localizer mapping";
+        return failure;
+    }
+    const auto localization_entries = std::span(entries).last<callbacks::kLocalizationHookCount>();
+    callbacks::prepare_localization_hooks(base, localization_entries);
+    for (const EntryHook& entry : localization_entries)
+    {
+        if (!mapped_range(entry.target, entry.expected_size, base, true) ||
+            std::memcmp(entry.target, entry.expected_bytes, entry.expected_size) != 0)
+        {
+            failure.stage = "export localization call validation";
+            return failure;
+        }
+    }
+
     const std::array<void*, 7> replacements{function_address(callbacks::file_release),
                                             function_address(callbacks::stream_write),
                                             function_address(callbacks::stream_set_format),
@@ -307,7 +320,7 @@ HookResult install_passthrough_hooks()
                           replacements[index]};
     }
     std::array<ImportHook, 7> audio_imports{};
-    if (!openal_capture_hooks::prepare(base, size, entries[8], audio_imports))
+    if (!openal_capture_hooks::prepare(base, size, entries[7], audio_imports))
     {
         failure.stage = "OpenAL capture hook validation";
         return failure;
@@ -336,8 +349,8 @@ HookResult install_passthrough_hooks()
         failure.stage = "OpenAL gain hook validation";
         return failure;
     }
-    entries[9] = gain_entries[0];
-    entries[10] = gain_entries[1];
+    entries[8] = gain_entries[0];
+    entries[9] = gain_entries[1];
     imports[14] = gain_imports[0];
     imports[15] = gain_imports[1];
     return install_hooks(entries, imports);

@@ -2,6 +2,7 @@
 
 #include "game_export.hpp"
 
+#include <array>
 #include <intrin.h>
 
 namespace cinemania::hook_callbacks
@@ -9,7 +10,6 @@ namespace cinemania::hook_callbacks
 DoShoot do_shoot_original = nullptr;
 Abort abort_original = nullptr;
 Open open_original = nullptr;
-Localize localize_original = nullptr;
 decltype(&AVIFileRelease) file_release_original = nullptr;
 decltype(&AVIStreamWrite) stream_write_original = nullptr;
 decltype(&AVIStreamSetFormat) stream_set_format_original = nullptr;
@@ -60,10 +60,15 @@ unsigned int __fastcall open_export(void* writer, void*, void* path)
     return open_original(writer, path);
 }
 
-const wchar_t* __fastcall localize(void* localizer, void*, const wchar_t* key)
+namespace
 {
-    const void* caller = _ReturnAddress();
-    const wchar_t* original = localize_original(localizer, key);
+using Localize = const wchar_t*(__thiscall*)(void*, const wchar_t*);
+Localize game_localize = nullptr;
+
+const wchar_t* __fastcall
+localize_export_message(void* localizer, const void* caller, const wchar_t* key)
+{
+    const wchar_t* original = game_localize(localizer, key);
 
     try
     {
@@ -73,6 +78,85 @@ const wchar_t* __fastcall localize(void* localizer, void*, const wchar_t* key)
     {
         game_export::exception();
         return L"Video export failed. Check the destination for any output.";
+    }
+}
+
+// MinHook jumps here in place of the five-byte CALL. ECX and the stacked key
+// already match the localizer's ABI. Pass the native return address in EDX,
+// then resume the shooter with the localized result in EAX and the key popped.
+#define CINEMANIA_LOCALIZATION_BRIDGE(name)                                                        \
+    const void* name##_continuation = nullptr;                                                     \
+    __declspec(naked) void name()                                                                  \
+    {                                                                                              \
+        __asm { mov edx, dword ptr [name##_continuation] }                                              \
+        __asm                                                                                      \
+        {                                                                                          \
+            call localize_export_message                                                           \
+        }                                                                                          \
+        __asm { jmp dword ptr [name##_continuation] }                                                  \
+    }
+
+CINEMANIA_LOCALIZATION_BRIDGE(localize_setup_dialog)
+CINEMANIA_LOCALIZATION_BRIDGE(localize_setup_status)
+CINEMANIA_LOCALIZATION_BRIDGE(localize_early_abort)
+CINEMANIA_LOCALIZATION_BRIDGE(localize_late_abort)
+CINEMANIA_LOCALIZATION_BRIDGE(localize_result_dialog)
+CINEMANIA_LOCALIZATION_BRIDGE(localize_result_status)
+
+#undef CINEMANIA_LOCALIZATION_BRIDGE
+} // namespace
+
+void prepare_localization_hooks(unsigned char* image,
+                                std::span<EntryHook, kLocalizationHookCount> entries) noexcept
+{
+    struct CallSite
+    {
+        std::size_t rva;
+        std::array<unsigned char, 5> bytes;
+        void (*bridge)();
+        const void** continuation;
+    };
+
+    // Shooter calls to 00902460 in TMUF 2.12.0. Calling the public game entry
+    // from each bridge lets other mods hook localization independently.
+    static constexpr std::array<CallSite, kLocalizationHookCount> sites{{
+        {0x2f4a69,
+         {0xe8, 0xf2, 0xd9, 0x20, 0},
+         localize_setup_dialog,
+         &localize_setup_dialog_continuation},
+        {0x2f4b7e,
+         {0xe8, 0xdd, 0xd8, 0x20, 0},
+         localize_setup_status,
+         &localize_setup_status_continuation},
+        {0x2f4c5e,
+         {0xe8, 0xfd, 0xd7, 0x20, 0},
+         localize_early_abort,
+         &localize_early_abort_continuation},
+        {0x2f5144,
+         {0xe8, 0x17, 0xd3, 0x20, 0},
+         localize_late_abort,
+         &localize_late_abort_continuation},
+        {0x2f52ed,
+         {0xe8, 0x6e, 0xd1, 0x20, 0},
+         localize_result_dialog,
+         &localize_result_dialog_continuation},
+        {0x2f5409,
+         {0xe8, 0x52, 0xd0, 0x20, 0},
+         localize_result_status,
+         &localize_result_status_continuation},
+    }};
+
+    game_localize = reinterpret_cast<Localize>(image + kLocalizerRva);
+    for (std::size_t index = 0; index < sites.size(); ++index)
+    {
+        const CallSite& site = sites[index];
+        auto* target = image + site.rva;
+        *site.continuation = target + site.bytes.size();
+        entries[index] = {target,
+                          reinterpret_cast<void*>(site.bridge),
+                          nullptr,
+                          site.bytes.data(),
+                          site.bytes.size()};
     }
 }
 
