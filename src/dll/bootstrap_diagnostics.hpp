@@ -7,6 +7,8 @@
 
 namespace cinemania
 {
+// Initialize before installing hooks; a failed contender never retries ownership.
+void initialize_diagnostics() noexcept;
 void report_bootstrap(const CheckResult& result, const HookResult& hooks);
 void append_diagnostic(std::string_view message) noexcept;
 } // namespace cinemania

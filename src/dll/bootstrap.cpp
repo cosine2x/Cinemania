@@ -13,6 +13,8 @@ namespace
 {
 DWORD WINAPI bootstrap(void*)
 {
+    cinemania::initialize_diagnostics();
+
     try
     {
         const cinemania::CheckResult check = cinemania::check_executable();

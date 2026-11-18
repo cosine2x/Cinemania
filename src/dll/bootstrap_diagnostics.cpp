@@ -1,9 +1,9 @@
 #include "bootstrap_diagnostics.hpp"
-#include "win32_file.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdio>
-#include <limits>
 #include <memory>
 #include <string>
 
@@ -47,7 +47,37 @@ const char* hook_domain_name(HookErrorDomain domain)
     return "unknown";
 }
 
-bool write_log(const char* message, int length, bool append = false)
+enum class LogState
+{
+    uninitialized,
+    disabled,
+    failed,
+    ready
+};
+
+// The handle and lock intentionally live until process exit; the DLL is pinned.
+// Keep the handle even after truncate or write failure to prevent another owner.
+SRWLOCK log_lock = SRWLOCK_INIT;
+std::atomic<LogState> log_state{LogState::uninitialized};
+HANDLE log_handle = INVALID_HANDLE_VALUE;
+
+class LastErrorGuard
+{
+public:
+    LastErrorGuard() : error_(GetLastError())
+    {
+    }
+
+    ~LastErrorGuard()
+    {
+        SetLastError(error_);
+    }
+
+private:
+    DWORD error_;
+};
+
+LogState open_log()
 {
     PWSTR local_app_data = nullptr;
     const HRESULT folder_result =
@@ -55,84 +85,120 @@ bool write_log(const char* message, int length, bool append = false)
     const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> folder(local_app_data, &CoTaskMemFree);
     if (FAILED(folder_result))
     {
-        return false;
+        return LogState::failed;
     }
 
-    const std::wstring base(folder.get());
-    const std::wstring directory = base + L"\\Cinemania";
+    const std::wstring directory = std::wstring(folder.get()) + L"\\Cinemania";
     const std::wstring logs = directory + L"\\logs";
     if ((!CreateDirectoryW(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) ||
         (!CreateDirectoryW(logs.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS))
     {
-        return false;
+        return LogState::failed;
     }
 
-    FILETIME creation{};
-    FILETIME exit{};
-    FILETIME kernel{};
-    FILETIME user{};
-    if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user))
+    const std::wstring path = logs + L"\\Cinemania.log";
+    log_handle = CreateFileW(path.c_str(),
+                             GENERIC_WRITE,
+                             FILE_SHARE_READ,
+                             nullptr,
+                             OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL,
+                             nullptr);
+    if (log_handle == INVALID_HANDLE_VALUE)
     {
-        return false;
+        if (GetLastError() == ERROR_SHARING_VIOLATION)
+        {
+            return LogState::disabled;
+        }
+        return LogState::failed;
     }
 
-    wchar_t name[100]{};
-    if (swprintf_s(name,
-                   L"\\%lu-%08lX%08lX.log",
-                   GetCurrentProcessId(),
-                   creation.dwHighDateTime,
-                   creation.dwLowDateTime) < 0)
+    if (!SetFilePointerEx(log_handle, LARGE_INTEGER{}, nullptr, FILE_BEGIN) ||
+        !SetEndOfFile(log_handle))
     {
-        return false;
+        return LogState::failed;
     }
+    return LogState::ready;
+}
 
-    const std::wstring path = logs + name;
-    FileHandle log(CreateFileW(path.c_str(),
-                               append ? FILE_APPEND_DATA : GENERIC_WRITE,
-                               FILE_SHARE_READ,
-                               nullptr,
-                               append ? OPEN_ALWAYS : CREATE_NEW,
-                               FILE_ATTRIBUTE_NORMAL,
-                               nullptr));
-    DWORD written = 0;
-    if (log.get() == INVALID_HANDLE_VALUE ||
-        !WriteFile(log.get(), message, static_cast<DWORD>(length), &written, nullptr) ||
-        written != static_cast<DWORD>(length))
+LogState write_log(std::string_view message) noexcept
+{
+    LogState state = log_state.load();
+    if (state != LogState::ready || message.empty())
     {
-        return false;
+        return state;
     }
 
-    return true;
+    AcquireSRWLockExclusive(&log_lock);
+    state = log_state.load();
+    if (state == LogState::ready)
+    {
+        std::size_t offset = 0;
+        while (offset < message.size())
+        {
+            const std::size_t remaining = message.size() - offset;
+            const DWORD chunk =
+                static_cast<DWORD>((std::min)(remaining, static_cast<std::size_t>(MAXDWORD)));
+            DWORD written = 0;
+            if (!WriteFile(log_handle, message.data() + offset, chunk, &written, nullptr) ||
+                written == 0 || written > chunk)
+            {
+                state = LogState::failed;
+                log_state.store(state);
+                break;
+            }
+
+            offset += written;
+        }
+    }
+
+    ReleaseSRWLockExclusive(&log_lock);
+    return state;
 }
 } // namespace
 
-void append_diagnostic(std::string_view message) noexcept
+void initialize_diagnostics() noexcept
 {
-    if (message.empty() ||
-        message.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    LastErrorGuard preserve_error;
+    AcquireSRWLockExclusive(&log_lock);
+    if (log_state.load() != LogState::uninitialized)
     {
+        ReleaseSRWLockExclusive(&log_lock);
         return;
     }
 
+    LogState state = LogState::failed;
     try
     {
-        if (write_log(message.data(), static_cast<int>(message.size()), true))
-        {
-            return;
-        }
+        state = open_log();
     }
     catch (...)
     {
-        // Diagnostics must not unwind across a game callback or hide its primary result.
-        OutputDebugStringA("Cinemania: exception while appending a diagnostic.\n");
+        // Diagnostics cannot unwind across the bootstrap thread boundary.
+        state = LogState::failed;
+    }
+
+    log_state.store(state);
+    ReleaseSRWLockExclusive(&log_lock);
+}
+
+void append_diagnostic(std::string_view message) noexcept
+{
+    LastErrorGuard preserve_error;
+    if (message.empty())
+    {
         return;
     }
 
-    OutputDebugStringA("Cinemania: could not append a diagnostic.\n");
+    if (write_log(message) == LogState::failed)
+    {
+        OutputDebugStringA("Cinemania: could not append a diagnostic.\n");
+    }
 }
 
 void report_bootstrap(const CheckResult& result, const HookResult& hooks)
 {
+    LastErrorGuard preserve_error;
     char hash_text[65] = "unavailable";
     if (result.has_hash)
     {
@@ -176,7 +242,7 @@ void report_bootstrap(const CheckResult& result, const HookResult& hooks)
         return;
     }
 
-    if (!write_log(message, length))
+    if (write_log(std::string_view(message, static_cast<std::size_t>(length))) == LogState::failed)
     {
         OutputDebugStringA(message);
     }
