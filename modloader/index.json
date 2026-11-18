@@ -20,6 +20,18 @@
                     "download_link": "https://github.com/mediocre-q/Cinemania/releases/download/v0.1.0/Cinemania-0.1.0.zip",
                     "hash_sha256": "ddf8d5a3dc0059339e498fc015b716ea8cb0b9576f4d9c52aca6c71131c05f30",
                     "changelog": "Cinemania 0.1.0."
+                },
+                "0.2.0": {
+                    "executable": "Cinemania.dll",
+                    "dependencies": [
+                        {
+                            "id": "TmForever",
+                            "version": "2.12.0"
+                        }
+                    ],
+                    "download_link": "https://github.com/mediocre-q/Cinemania/releases/download/v0.2.0/Cinemania-0.2.0.zip",
+                    "hash_sha256": "67dfbac65f252cb7b0698a7a43a79e5b7688f2f44e3ac76da76e965cd73ea116",
+                    "changelog": "Cinemania 0.2.0."
                 }
             }
         }
