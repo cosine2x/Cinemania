@@ -19,8 +19,8 @@ and ZIP contents. Its manifest records the build receipt, including the source c
 hashes. ZIP ordering, metadata and manifest serialization are deterministic for
 identical inputs; MSVC binaries themselves are not promised reproducible.
 
-Normal builds do not build or download FFmpeg. The minimal binary has no public
-hosting location yet, so supply the trusted pinned executable explicitly. CI
+Normal builds do not build or download FFmpeg. Supply the trusted pinned
+executable explicitly; it is included in the [0.1.0 runtime ZIP](https://github.com/mediocre-q/Cinemania/releases/download/v0.1.0/Cinemania-0.1.0.zip). CI
 builds and uploads the DLL and worker only; it does not create a complete ZIP.
 Before distributing the binary, create the matching dependency source bundle
 from the pinned FFmpeg and x264 archives:
@@ -48,17 +48,16 @@ checks the archive layout, binary hashes and PE architecture, manifest version,
 and clean source commit. To retain earlier releases, pass `--previous path/to/index.json`;
 the output must be a new file (`--output` selects another path). It refuses to
 replace an existing version with different metadata. The entry depends on
-`TmForever` 2.12.0, the supported executable baseline. Its proposed Release
+`TmForever` 2.12.0, the supported executable baseline. For 0.1.0, the runtime
 asset URL and feed server base are respectively
 `https://github.com/mediocre-q/Cinemania/releases/download/v0.1.0/Cinemania-0.1.0.zip`
 and `https://raw.githubusercontent.com/mediocre-q/Cinemania/master/modloader/`.
-These addresses are not yet published or verified. After the release assets are
-accessible, verify their downloaded bytes and redirects, then publish the
-resulting index as `modloader/index.json` on `master`. Test installation through
-TMLoader before announcing the feed; no new server or game configuration is
-changed by the generator.
+For future versions, publish the release assets and verify their downloaded bytes
+and redirects before updating `modloader/index.json` on `master`. Test installation
+through TMLoader before announcing the feed; the generator does not change server
+or game configuration.
 
-Once published, close TMLoader and add the following entry under `servers:` in
+Close TMLoader and add the following entry under `servers:` in
 its `config.yaml`, preserving any existing entries, then reopen TMLoader:
 
 ```yaml

@@ -1,0 +1,27 @@
+{
+    "api": 1,
+    "game": "TmForever",
+    "products": {
+        "Cinemania": {
+            "name": "Cinemania",
+            "author": "mediocre-q",
+            "type": "modification",
+            "description": "Modern video export for TrackMania United Forever 2.12.0.",
+            "homepage": "https://github.com/mediocre-q/Cinemania",
+            "versions": {
+                "0.1.0": {
+                    "executable": "Cinemania.dll",
+                    "dependencies": [
+                        {
+                            "id": "TmForever",
+                            "version": "2.12.0"
+                        }
+                    ],
+                    "download_link": "https://github.com/mediocre-q/Cinemania/releases/download/v0.1.0/Cinemania-0.1.0.zip",
+                    "hash_sha256": "ddf8d5a3dc0059339e498fc015b716ea8cb0b9576f4d9c52aca6c71131c05f30",
+                    "changelog": "Cinemania 0.1.0."
+                }
+            }
+        }
+    }
+}
