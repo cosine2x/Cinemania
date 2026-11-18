@@ -1,4 +1,33 @@
-# Windows build and package
+# Building and releasing Cinemania
+
+## Publish a release
+
+Update the project version in `CMakeLists.txt` and commit it with the changes
+for the release. Push that commit to `master`, then push an annotated tag that
+matches the project version. For example, for version `0.3.0`:
+
+```powershell
+git push origin master
+git tag -a v0.3.0 -m "Cinemania 0.3.0"
+git push origin v0.3.0
+```
+
+The **Publish Cinemania release** workflow runs for version tag pushes. It
+builds the tagged source, packages the runtime and corresponding dependency
+sources, and creates a GitHub release with generated notes. It verifies the
+public downloads before pushing the new TMLoader feed entry to `master`.
+Previous feed entries remain available.
+
+If a publication step fails, rerun the failed workflow on the same tag.
+The workflow can resume from a draft or use the verified assets of an already
+published release. Once the feed is updated, install the release in TMLoader
+to check that the package is offered and downloads successfully.
+
+The workflow reuses the pinned FFmpeg binary and source inputs from the
+`v0.1.0` release. When updating FFmpeg or x264, update the pinned download inputs
+in `scripts/release.py` along with the matching package and source checksums.
+
+## Build and package locally
 
 Install Visual Studio 2022 or newer with the MSVC x86/x64 C++ tools and Windows
 SDK, plus CMake 3.20 or newer, Ninja, Git and Python 3.10 or newer. Run from the repository root:
@@ -10,7 +39,7 @@ python ./scripts/package.py --ffmpeg "C:/path with spaces/ffmpeg.exe"
 
 The build script discovers Visual Studio using vswhere and builds both Release
 targets under `build/` and creates a receipt only after both builds succeed. If Python is not on PATH, pass its executable with `-Python "C:/path/python.exe"`. Packaging verifies the receipt, source fingerprint, Release configuration and binary hashes, then reads these outputs and writes a new
-`out/Cinemania-0.2.0/` directory containing the ZIP and external SHA256SUMS.
+`out/Cinemania-<version>/` directory containing the ZIP and external SHA256SUMS.
 To use another parent directory, pass `--output "C:/path with spaces/output"`.
 Existing versioned output is never replaced; move it aside before running again.
 `python ./scripts/package.py --help` lists the options. The package checks PE
@@ -19,14 +48,14 @@ and ZIP contents. Its manifest records the build receipt, including the source c
 hashes. ZIP ordering, metadata and manifest serialization are deterministic for
 identical inputs; MSVC binaries themselves are not promised reproducible.
 
-Normal builds do not build or download FFmpeg. Supply the trusted pinned
-executable explicitly. It is included in the [0.2.0 runtime ZIP](https://github.com/mediocre-q/Cinemania/releases/download/v0.2.0/Cinemania-0.2.0.zip). CI
-builds and uploads the DLL and worker only; it does not create a complete ZIP.
+For local packaging, supply the trusted pinned FFmpeg executable explicitly.
+It is included in the runtime ZIP from the latest release.
 Before distributing the binary, create the matching dependency source bundle
 from the pinned FFmpeg and x264 archives:
 
 ```powershell
-python ./scripts/source_bundle.py --ffmpeg-source "C:/path/ffmpeg-9.0.2.tar.xz" --x264-source "C:/path/x264-source.tar" --output ./out/Cinemania-0.2.0/Cinemania-0.2.0-dependency-sources.zip
+$version = '0.3.0' # Use the CMake project version.
+python ./scripts/source_bundle.py --ffmpeg-source "C:/path/ffmpeg-9.0.2.tar.xz" --x264-source "C:/path/x264-source.tar" --output "./out/Cinemania-$version/Cinemania-$version-dependency-sources.zip"
 ```
 
 The script verifies both archive hashes and includes the build recipe. Upload
@@ -34,28 +63,21 @@ this ZIP as a release asset alongside the binary ZIP; the automatically generate
 Cinemania source archive does not include these dependencies. See
 `licenses/DEPENDENCIES.md` for hashes and provenance.
 
-## TMLoader feed preparation
+## Generate the TMLoader feed locally
 
 After committing the release source, build and package from that clean commit.
 Generate the feed from the resulting ZIP:
 
 ```powershell
-python ./scripts/modloader_feed.py ./out/Cinemania-0.2.0/Cinemania-0.2.0.zip --previous ./modloader/index.json
+python ./scripts/modloader_feed.py "./out/Cinemania-$version/Cinemania-$version.zip" --previous ./modloader/index.json
 ```
 
 This writes a new `index.json` next to the ZIP, using its exact SHA-256. It
 checks the archive layout, binary hashes and PE architecture, manifest version,
-and clean source commit. To retain earlier releases, pass `--previous path/to/index.json`;
-the output must be a new file (`--output` selects another path). It refuses to
+and clean source commit. Pass `--previous` to retain earlier releases.
+Use `--output` to select a new output path. The generator refuses to
 replace an existing version with different metadata. The entry depends on
-`TmForever` 2.12.0, the supported executable baseline. For 0.2.0, the runtime
-asset URL and feed server base are respectively
-`https://github.com/mediocre-q/Cinemania/releases/download/v0.2.0/Cinemania-0.2.0.zip`
-and `https://raw.githubusercontent.com/mediocre-q/Cinemania/master/modloader/`.
-For future versions, publish the release assets and verify their downloaded bytes
-and redirects before updating `modloader/index.json` on `master`. Test installation
-through TMLoader before announcing the feed; the generator does not change server
-or game configuration.
+`TmForever` 2.12.0, the supported executable baseline.
 
 Close TMLoader and add the following entry under `servers:` in
 its `config.yaml`, preserving any existing entries, then reopen TMLoader:

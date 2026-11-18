@@ -1,0 +1,37 @@
+name: Publish Cinemania release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cinemania-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'mediocre-q/Cinemania' && !github.event.deleted
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Validate release tag
+        shell: pwsh
+        run: python ./scripts/release.py validate $env:GITHUB_REF_NAME
+      - name: Build Release binaries
+        shell: pwsh
+        run: ./scripts/build.ps1
+      - name: Package runtime and dependency sources
+        shell: pwsh
+        run: python ./scripts/release.py package $env:GITHUB_REF_NAME
+      - name: Publish release and update the TMLoader feed
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ./scripts/release.py publish $env:GITHUB_REF_NAME

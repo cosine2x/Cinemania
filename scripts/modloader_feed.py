@@ -4,24 +4,19 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 import zipfile
 
 sys.dont_write_bytecode = True
-from package import FFMPEG_SHA256, FFMPEG_SIZE, PACKAGE_ENTRIES, inspect_pe, source_fingerprint
+from package import FFMPEG_SHA256, FFMPEG_SIZE, PACKAGE_ENTRIES, inspect_pe, project_version, source_fingerprint
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "https://github.com/mediocre-q/Cinemania"
 
 
 def generate(archive, output, previous=None):
-    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-    match = re.search(r"project\(Cinemania VERSION (\d+\.\d+\.\d+) LANGUAGES CXX\)", cmake)
-    if not match:
-        raise ValueError("CMake project version not found")
-    version = match.group(1)
+    version = project_version()
     if archive.name != f"Cinemania-{version}.zip":
         raise ValueError("ZIP filename does not match source version")
     with zipfile.ZipFile(archive) as zipped:

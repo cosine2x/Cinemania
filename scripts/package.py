@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build a verified Cinemania package from explicit Release binaries.
 
-The FFmpeg binary is not hosted yet: supply the trusted pinned binary via
---ffmpeg. A separate dependency source bundle is prepared by source_bundle.py.
+Supply the trusted pinned FFmpeg binary via --ffmpeg. A separate dependency
+source bundle is prepared by source_bundle.py.
 This tool never downloads or builds FFmpeg.
 """
 
@@ -38,6 +38,14 @@ PACKAGE_ENTRIES = frozenset((*PACKAGE_LICENSE_FILES, "Cinemania.dll", "bin/Cinem
 
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def project_version():
+    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+    match = re.search(r"project\(Cinemania VERSION (\d+\.\d+\.\d+) LANGUAGES CXX\)", cmake)
+    if not match:
+        raise ValueError("CMake project version not found")
+    return match.group(1)
 
 
 def inspect_pe(data, machine, dll, anchor=False):
@@ -189,12 +197,7 @@ def verify_build():
 
 
 def package(ffmpeg_path, output_root):
-    cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-    version = re.search(r"project\(Cinemania VERSION (\d+\.\d+\.\d+) LANGUAGES CXX\)", cmake)
-    if not version:
-        raise ValueError("CMake project version not found")
-    version = version.group(1)
-
+    version = project_version()
     dll, worker = verify_build()
     receipt = verified_receipt(dll, worker)
     binaries = {
