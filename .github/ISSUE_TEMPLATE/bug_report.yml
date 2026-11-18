@@ -1,0 +1,19 @@
+name: Bug report
+description: Report a problem with Cinemania and attach the log file.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem, what you expected, and how to reproduce it.
+    validations:
+      required: true
+  - type: upload
+    id: cinemania-log
+    attributes:
+      label: Cinemania log file
+      description: |
+        After the problem occurs, open `%LOCALAPPDATA%\Cinemania\logs` in File Explorer and attach `Cinemania.log` here before restarting TrackMania.
+        If the file is missing, mention that in your report.
+    validations:
+      accept: ".log"
