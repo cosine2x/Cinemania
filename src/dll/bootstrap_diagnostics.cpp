@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -46,7 +47,7 @@ const char* hook_domain_name(HookErrorDomain domain)
     return "unknown";
 }
 
-bool write_log(const char* message, int length)
+bool write_log(const char* message, int length, bool append = false)
 {
     PWSTR local_app_data = nullptr;
     const HRESULT folder_result =
@@ -87,10 +88,10 @@ bool write_log(const char* message, int length)
 
     const std::wstring path = logs + name;
     FileHandle log(CreateFileW(path.c_str(),
-                               GENERIC_WRITE,
+                               append ? FILE_APPEND_DATA : GENERIC_WRITE,
                                FILE_SHARE_READ,
                                nullptr,
-                               CREATE_NEW,
+                               append ? OPEN_ALWAYS : CREATE_NEW,
                                FILE_ATTRIBUTE_NORMAL,
                                nullptr));
     DWORD written = 0;
@@ -104,6 +105,31 @@ bool write_log(const char* message, int length)
     return true;
 }
 } // namespace
+
+void append_diagnostic(std::string_view message) noexcept
+{
+    if (message.empty() ||
+        message.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    {
+        return;
+    }
+
+    try
+    {
+        if (write_log(message.data(), static_cast<int>(message.size()), true))
+        {
+            return;
+        }
+    }
+    catch (...)
+    {
+        // Diagnostics must not unwind across a game callback or hide its primary result.
+        OutputDebugStringA("Cinemania: exception while appending a diagnostic.\n");
+        return;
+    }
+
+    OutputDebugStringA("Cinemania: could not append a diagnostic.\n");
+}
 
 void report_bootstrap(const CheckResult& result, const HookResult& hooks)
 {

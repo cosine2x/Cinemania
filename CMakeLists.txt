@@ -48,7 +48,10 @@ else()
         src/dll/hook_callbacks.cpp
         src/dll/hook_transaction.cpp
         src/dll/passthrough_hooks.cpp
+        src/dll/viewport_capture_hooks.cpp
+        src/dll/native_render_ahead.cpp
         src/dll/cinemania.def)
+
     target_compile_features(Cinemania PRIVATE cxx_std_20)
     target_compile_options(Cinemania PRIVATE /W4 /WX /permissive- /EHsc)
     target_compile_definitions(Cinemania PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

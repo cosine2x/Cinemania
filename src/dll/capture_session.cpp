@@ -1,5 +1,7 @@
 #include "video_export_internal.hpp"
 
+#include "native_render_ahead.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -137,34 +139,66 @@ std::shared_ptr<Session> find_session(void* shooter, void* fiber)
     return {};
 }
 
+std::shared_ptr<Session> find_render_ahead_viewport(void* viewport)
+{
+    Registry& state = registry();
+    std::lock_guard lock(state.mutex);
+    for (const auto& session : state.sessions)
+    {
+        if (session->render_ahead_viewport == viewport)
+        {
+            return session;
+        }
+    }
+    return {};
+}
+
+bool bind_render_ahead_viewport(const std::shared_ptr<Session>& session, void* viewport)
+{
+    Registry& state = registry();
+    std::lock_guard lock(state.mutex);
+    for (const auto& existing : state.sessions)
+    {
+        if (existing != session && existing->render_ahead_viewport == viewport)
+        {
+            return false;
+        }
+    }
+    session->render_ahead_viewport = viewport;
+    return true;
+}
+
+void unbind_render_ahead_viewport(const std::shared_ptr<Session>& session)
+{
+    Registry& state = registry();
+    std::lock_guard lock(state.mutex);
+    session->render_ahead_viewport = nullptr;
+}
+
 bool owned(const std::shared_ptr<Session>& session);
 
 void retire(void* shooter, void* fiber)
 {
+    auto session = find_session(shooter, fiber);
+    if (!session || !owned(session))
+    {
+        return;
+    }
+
+    native_render_ahead::retire(session);
     Registry& state = registry();
-    std::shared_ptr<Session> removed;
     {
         std::lock_guard lock(state.mutex);
-        for (auto it = state.sessions.begin(); it != state.sessions.end(); ++it)
+        const auto it = std::find(state.sessions.begin(), state.sessions.end(), session);
+        if (it != state.sessions.end())
         {
-            if ((*it)->shooter != shooter || (*it)->fiber != fiber)
-            {
-                continue;
-            }
-            if (!owned(*it))
-            {
-                return;
-            }
-
-            removed = std::move(*it);
             state.sessions.erase(it);
-            break;
         }
     }
 
-    if (removed && removed->encoder && removed->state != State::success)
+    if (session->encoder && session->state != State::success)
     {
-        removed->encoder->cancel();
+        session->encoder->cancel();
     }
 }
 

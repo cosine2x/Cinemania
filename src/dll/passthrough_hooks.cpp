@@ -3,6 +3,8 @@
 #include "hook_callbacks.hpp"
 #include "hook_transaction.hpp"
 
+#include "viewport_capture_hooks.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +29,22 @@ constexpr std::array<EntrySpec, 4> kEntries{{
     {0x55a150, {0x56, 0x8b, 0xf1, 0x8b, 0x46, 0x04}, 6},
     {0x502460, {0x8b, 0x44, 0x24, 0x04, 0x66, 0x83, 0x38, 0x00}, 8},
 }};
+// Static bytes from the pinned 2.12.0 image: capture and stop inside
+// 009a4070, Reset at 0095c430, and resource teardown at 0095dba0.
+constexpr std::array<EntrySpec, 4> kViewportEntries{{
+    {0x5a44bc, {0x55, 0x8d, 0x8e, 0xfc, 0x09, 0x00, 0x00}, 7},
+    {0x5a4649, {0x39, 0xae, 0x50, 0x05, 0x00, 0x00}, 6},
+    {0x55c430, {0x6a, 0xff, 0x68, 0xa0, 0x96, 0xae, 0x00}, 7},
+    {0x55dba0, {0x83, 0xec, 0x10, 0x56, 0x8b, 0xf1}, 6},
+}};
+constexpr std::size_t kEntryCount = kEntries.size() + kViewportEntries.size();
+// Native EVENT ring functions in the pinned 2.12.0 image.
+constexpr std::array<EntrySpec, 3> kRenderAheadFunctions{{
+    {0x58bab0, {0x51, 0x57, 0x8b, 0xf9, 0x83, 0xbf, 0xf8, 0x09}, 8},
+    {0x58b6e0, {0x83, 0xec, 0x08, 0x53, 0x55, 0x56, 0x8b, 0xf1}, 8},
+    {0x58b6d0, {0x33, 0xc0, 0x89, 0x81, 0x3c, 0x09, 0x00, 0x00}, 8},
+}};
+
 constexpr std::array<std::size_t, 7> kImportRvas{
     0x728050, 0x728080, 0x728084, 0x728088, 0x72808c, 0x728090, 0x728094};
 constexpr std::array<const char*, 7> kImportNames{"AVIFileRelease",
@@ -144,6 +162,49 @@ HookResult install_passthrough_hooks()
         }
     }
 
+    for (const EntrySpec& entry : kRenderAheadFunctions)
+    {
+        if (!in_image(entry.rva, entry.length, size) ||
+            !mapped_range(base + entry.rva, entry.length, base, true) ||
+            std::memcmp(base + entry.rva, entry.bytes.data(), entry.length) != 0)
+        {
+            failure.stage = "native ring function validation";
+            return failure;
+        }
+    }
+    if (!in_image(0x9777ac, sizeof(std::uint32_t), size) ||
+        !mapped_range(base + 0x9777ac, sizeof(std::uint32_t), base, false) ||
+        !in_image(0x7d10bc, sizeof(void*), size) ||
+        !mapped_range(base + 0x7d10bc, sizeof(void*), base, false))
+    {
+        failure.stage = "native ring data validation";
+        return failure;
+    }
+
+    auto viewport_entries = kViewportEntries;
+    // Reset's PUSH immediate references image data and is relocated by the
+    // loader. Compare against the current image base, not the preferred base.
+    const auto reset_handler = reinterpret_cast<std::uintptr_t>(base) + 0x6e96a0;
+    if (!in_image(0x6e96a0, 1, size) || reset_handler > UINT32_MAX ||
+        !in_image(0x5a4631, 1, size) || !mapped_range(base + 0x5a4631, 1, base, true))
+    {
+        failure.stage = "viewport reset handler validation";
+        return failure;
+    }
+    const auto reset_handler32 = static_cast<std::uint32_t>(reset_handler);
+    std::memcpy(viewport_entries[2].bytes.data() + 3, &reset_handler32, sizeof(reset_handler32));
+    for (const EntrySpec& entry : viewport_entries)
+    {
+        if (!in_image(entry.rva, entry.length, size) ||
+            !mapped_range(base + entry.rva, entry.length, base, true) ||
+            std::memcmp(base + entry.rva, entry.bytes.data(), entry.length) != 0)
+        {
+            failure.stage = "viewport entry validation";
+            return failure;
+        }
+    }
+    viewport_capture_hooks::prepare(base);
+
     HMODULE avifile = GetModuleHandleW(L"avifil32.dll");
     if (avifile == nullptr)
     {
@@ -187,7 +248,7 @@ HookResult install_passthrough_hooks()
     callbacks::stream_release_original =
         reinterpret_cast<decltype(callbacks::stream_release_original)>(originals[6]);
 
-    std::array<EntryHook, 4> entries{{
+    std::array<EntryHook, kEntryCount> entries{{
         {base + kEntries[0].rva,
          function_address(callbacks::do_shoot),
          original_address(callbacks::do_shoot_original),
@@ -208,6 +269,26 @@ HookResult install_passthrough_hooks()
          original_address(callbacks::localize_original),
          kEntries[3].bytes.data(),
          kEntries[3].length},
+        {base + viewport_entries[0].rva,
+         function_address(cinemania_capture_bridge),
+         &cinemania_capture_original,
+         viewport_entries[0].bytes.data(),
+         viewport_entries[0].length},
+        {base + viewport_entries[1].rva,
+         function_address(cinemania_cleanup_bridge),
+         &cinemania_cleanup_original,
+         viewport_entries[1].bytes.data(),
+         viewport_entries[1].length},
+        {base + viewport_entries[2].rva,
+         function_address(cinemania_reset_bridge),
+         &cinemania_reset_original,
+         viewport_entries[2].bytes.data(),
+         viewport_entries[2].length},
+        {base + viewport_entries[3].rva,
+         function_address(cinemania_teardown_bridge),
+         &cinemania_teardown_original,
+         viewport_entries[3].bytes.data(),
+         viewport_entries[3].length},
     }};
     const std::array<void*, 7> replacements{function_address(callbacks::file_release),
                                             function_address(callbacks::stream_write),
