@@ -14,7 +14,6 @@ using DoShoot = void(__thiscall*)(void*, void**);
 using Abort = unsigned int(__thiscall*)(void*);
 using Open = unsigned int(__thiscall*)(void*, void*);
 
-constexpr std::size_t kLocalizerRva = 0x502460;
 constexpr std::size_t kLocalizationHookCount = 6;
 
 void prepare_localization_hooks(unsigned char* image,

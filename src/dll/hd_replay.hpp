@@ -2,6 +2,7 @@
 
 #include "hook_transaction.hpp"
 
+#include <cstddef>
 #include <span>
 
 namespace cinemania::hd_replay

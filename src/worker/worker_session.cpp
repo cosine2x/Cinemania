@@ -20,6 +20,9 @@ namespace
 // Leave CPU capacity for the game while allowing a small parallel conversion pool.
 constexpr std::uint32_t kMaxVideoFilterThreads = 4;
 constexpr wchar_t kAudioBitrate[] = L"512k";
+constexpr wchar_t kVideoFilter[] =
+    L"vflip,scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p,"
+    L"setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709";
 
 Deadline deadline()
 {
@@ -92,8 +95,7 @@ std::vector<std::wstring> video_arguments(const SessionFormat& format, const std
             L"-i",
             L"pipe:0",
             L"-vf",
-            L"vflip,scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p,"
-            L"setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709",
+            kVideoFilter,
             L"-c:v",
             L"libx264",
             L"-preset",

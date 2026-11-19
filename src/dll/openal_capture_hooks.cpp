@@ -1,6 +1,7 @@
 #include "openal_capture_hooks.hpp"
 
 #include "export_volume.hpp"
+#include "game_abi.hpp"
 #include "game_export.hpp"
 #include "openal_capture.hpp"
 #include "openal_capture_compat.hpp"
@@ -47,7 +48,7 @@ unsigned char* game_base = nullptr;
 std::mutex install_mutex;
 bool mixer_installed = false;
 bool mixer_attempted = false;
-std::array<unsigned char, 8> set_capture_bytes{0x6a, 0xff, 0x68, 0, 0, 0, 0, 0};
+game_abi::SehPrologue set_capture_bytes;
 constexpr std::array<std::size_t, 7> kImportRvas{
     0x728398, 0x728394, 0x7283bc, 0x7283c0, 0x728390, 0x728384, 0x728400};
 constexpr std::array<const char*, 7> kNames{"alcCaptureOpenDevice",
@@ -480,22 +481,17 @@ bool prepare(unsigned char* game,
              EntryHook& entry,
              std::array<ImportHook, 7>& imports) noexcept
 {
+    constexpr std::size_t capture_rva = 0x3a6530;
+    constexpr std::size_t exception_handler_rva = 0x6cb2a0;
     HMODULE router = GetModuleHandleW(L"OpenAL32.dll");
-    if (!router || image_size < 0x728404 || image_size < 0x6cb2a1 ||
-        !readable(game + 0x3a6530, 7, game))
+    if (!router || image_size < 0x728404 || exception_handler_rva >= image_size ||
+        !readable(game + capture_rva, set_capture_bytes.size(), game))
     {
         return false;
     }
 
-    const auto handler = reinterpret_cast<std::uintptr_t>(game) + 0x6cb2a0;
-    if (handler > UINT32_MAX)
-    {
-        return false;
-    }
-
-    const auto handler32 = static_cast<std::uint32_t>(handler);
-    std::memcpy(set_capture_bytes.data() + 3, &handler32, sizeof(handler32));
-    if (std::memcmp(game + 0x3a6530, set_capture_bytes.data(), 7) != 0)
+    set_capture_bytes = game_abi::seh_prologue(game + exception_handler_rva);
+    if (std::memcmp(game + capture_rva, set_capture_bytes.data(), set_capture_bytes.size()) != 0)
     {
         return false;
     }
@@ -533,11 +529,8 @@ bool prepare(unsigned char* game,
     original_integer = reinterpret_cast<Integer>(originals[5]);
     original_error = reinterpret_cast<Error>(originals[6]);
     game_base = game;
-    entry = {game + 0x3a6530,
-             reinterpret_cast<void*>(set_capture),
-             reinterpret_cast<void**>(&original_set_capture),
-             set_capture_bytes.data(),
-             7};
+    entry = make_entry_hook(
+        game + capture_rva, set_capture, set_capture_bytes, original_address(original_set_capture));
     return true;
 }
 } // namespace cinemania::openal_capture_hooks

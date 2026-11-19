@@ -1,5 +1,6 @@
 #include "game_export.hpp"
 
+#include "game_abi.hpp"
 #include "openal_capture.hpp"
 #include "openal_capture_hooks.hpp"
 #include "video_export_internal.hpp"
@@ -13,24 +14,17 @@
 
 namespace cinemania::game_export
 {
+using game_abi::executable_image;
+using game_abi::field;
+using game_abi::function_at;
+
 namespace detail
 {
-constexpr std::uintptr_t kDone = 0xffffffff;
 constexpr wchar_t kFailure[] = L"Video export failed. Check the destination for any output.";
 constexpr wchar_t kCancelled[] = L"Video export cancelled. Check the destination for any output.";
 thread_local Invocation* invocation = nullptr;
 // Bootstrap publishes this only after the entire hook transaction succeeds.
 std::atomic<bool> video_routing_ready = false;
-
-std::uintptr_t base()
-{
-    return reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-}
-
-std::uint32_t word(void* object, std::size_t offset)
-{
-    return *reinterpret_cast<std::uint32_t*>(static_cast<std::byte*>(object) + offset);
-}
 
 std::shared_ptr<Session> current_session()
 {
@@ -107,6 +101,7 @@ struct WideInput
     std::uint32_t convert;
 };
 
+constexpr std::size_t kAssignWideRva = 0x503280;
 using AssignWide = void(__thiscall*)(WideString*, const WideInput*);
 
 } // namespace detail
@@ -118,7 +113,7 @@ using detail::State;
 Invocation::Invocation(void* shooter, void** fiber) noexcept
     : previous_(detail::invocation), shooter_(shooter), fiber_(fiber)
 {
-    if (fiber && *fiber && reinterpret_cast<std::uintptr_t>(*fiber) != detail::kDone)
+    if (fiber && *fiber && !game_abi::fiber_finished(*fiber))
     {
         key_ = *fiber;
     }
@@ -130,7 +125,7 @@ Invocation::~Invocation()
 {
     detail::invocation = static_cast<Invocation*>(previous_);
 
-    if (fiber_ && reinterpret_cast<std::uintptr_t>(*fiber_) == detail::kDone && key_)
+    if (fiber_ && game_abi::fiber_finished(*fiber_) && key_)
     {
         try
         {
@@ -157,21 +152,20 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
     }
 
     if (!detail::invocation || !detail::invocation->shooter_ || !writer || !path ||
-        !detail::invocation->fiber_ ||
-        reinterpret_cast<std::uintptr_t>(caller) != detail::base() + 0x2f4777)
+        !detail::invocation->fiber_ || caller != executable_image() + 0x2f4777)
     {
         return false;
     }
 
     void* fiber = *detail::invocation->fiber_;
-    if (!fiber || reinterpret_cast<std::uintptr_t>(fiber) == detail::kDone ||
+    if (!fiber || game_abi::fiber_finished(fiber) ||
         path != static_cast<std::byte*>(fiber) + 0x34 ||
-        detail::word(detail::invocation->shooter_, 0x14) != 0)
+        field<std::uint32_t>(detail::invocation->shooter_, 0x14) != 0)
     {
         return false;
     }
 
-    auto* settings = reinterpret_cast<void*>(detail::word(detail::invocation->shooter_, 0x4c));
+    auto* settings = field<void*>(detail::invocation->shooter_, 0x4c);
     if (!settings)
     {
         return false;
@@ -183,7 +177,7 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
     session->shooter = detail::invocation->shooter_;
     session->fiber = fiber;
     session->owner = GetCurrentThreadId();
-    session->audio_expected = detail::word(settings, 0x34) != 0;
+    session->audio_expected = field<std::uint32_t>(settings, 0x34) != 0;
     if (!detail::register_session(session))
     {
         result = 0;
@@ -216,10 +210,10 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
         return true;
     }
 
-    auto* context = reinterpret_cast<void**>(detail::word(writer, 4));
+    auto* context = field<void**>(writer, 4);
     constexpr unsigned char assign_prologue[] = {0x53, 0x8b, 0x5c, 0x24, 0x08};
     if (!context || *context ||
-        std::memcmp(reinterpret_cast<const void*>(detail::base() + 0x503280),
+        std::memcmp(executable_image() + detail::kAssignWideRva,
                     assign_prologue,
                     sizeof(assign_prologue)) != 0)
     {
@@ -236,7 +230,7 @@ bool open(void* writer, void* path, const void* caller, unsigned int& result)
 
     detail::WideInput input{
         session->path.c_str(), static_cast<std::uint32_t>(session->path.size()), 0};
-    reinterpret_cast<detail::AssignWide>(detail::base() + 0x503280)(game_path, &input);
+    function_at<detail::AssignWide>(executable_image(), detail::kAssignWideRva)(game_path, &input);
     *context = file;
     result = 1;
     return true;
@@ -295,8 +289,9 @@ const wchar_t* message(const wchar_t* key, const void* caller, const wchar_t* or
 
     const bool emergency =
         detail::emergency_failure(detail::invocation->shooter_, detail::invocation->key_);
-    const auto return_rva = reinterpret_cast<std::uintptr_t>(caller) - detail::base();
-    const auto literal = reinterpret_cast<std::uintptr_t>(key) - detail::base();
+    const auto image_base = reinterpret_cast<std::uintptr_t>(executable_image());
+    const auto return_rva = reinterpret_cast<std::uintptr_t>(caller) - image_base;
+    const auto literal = reinterpret_cast<std::uintptr_t>(key) - image_base;
     const bool final_message =
         (return_rva == 0x2f52f2 || return_rva == 0x2f540e) && literal == 0x78303c;
     const bool abort_message =

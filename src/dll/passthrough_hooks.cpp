@@ -2,13 +2,15 @@
 
 #include "bootstrap_diagnostics.hpp"
 #include "export_volume.hpp"
+#include "game_abi.hpp"
+#include "game_ui.hpp"
 #include "hd_replay.hpp"
 #include "hook_callbacks.hpp"
 #include "hook_transaction.hpp"
 #include "openal_capture_hooks.hpp"
-
 #include "viewport_capture_hooks.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -37,7 +39,7 @@ constexpr std::array<EntrySpec, 3> kEntries{{
 constexpr std::array<EntrySpec, 4> kViewportEntries{{
     {0x5a44bc, {0x55, 0x8d, 0x8e, 0xfc, 0x09, 0x00, 0x00}, 7},
     {0x5a4649, {0x39, 0xae, 0x50, 0x05, 0x00, 0x00}, 6},
-    {0x55c430, {0x6a, 0xff, 0x68, 0xa0, 0x96, 0xae, 0x00}, 7},
+    {0x55c430, {}, game_abi::SehPrologue{}.size()},
     {0x55dba0, {0x83, 0xec, 0x10, 0x56, 0x8b, 0xf1}, 6},
 }};
 constexpr std::size_t kEntryCount =
@@ -132,16 +134,6 @@ bool in_image(std::size_t rva, std::size_t length, std::size_t size)
     return rva <= size && length <= size - rva;
 }
 
-template <typename Function> void* function_address(Function function)
-{
-    return reinterpret_cast<void*>(function);
-}
-
-template <typename Function> void** original_address(Function& function)
-{
-    // MinHook writes the executable trampoline address to this x86 function pointer slot.
-    return reinterpret_cast<void**>(&function);
-}
 } // namespace
 
 HookResult install_passthrough_hooks()
@@ -149,7 +141,7 @@ HookResult install_passthrough_hooks()
     HookResult failure{};
     failure.domain = HookErrorDomain::validation;
     failure.stage = "image validation";
-    auto* base = reinterpret_cast<unsigned char*>(GetModuleHandleW(nullptr));
+    auto* base = game_abi::executable_image();
     std::size_t size = 0;
     if (base == nullptr || !image_size(base, size))
     {
@@ -188,15 +180,15 @@ HookResult install_passthrough_hooks()
     auto viewport_entries = kViewportEntries;
     // Reset's PUSH immediate references image data and is relocated by the
     // loader. Compare against the current image base, not the preferred base.
-    const auto reset_handler = reinterpret_cast<std::uintptr_t>(base) + 0x6e96a0;
-    if (!in_image(0x6e96a0, 1, size) || reset_handler > UINT32_MAX ||
-        !in_image(0x5a4631, 1, size) || !mapped_range(base + 0x5a4631, 1, base, true))
+    constexpr std::size_t reset_handler_rva = 0x6e96a0;
+    if (!in_image(reset_handler_rva, 1, size) || !in_image(0x5a4631, 1, size) ||
+        !mapped_range(base + 0x5a4631, 1, base, true))
     {
         failure.stage = "viewport reset handler validation";
         return failure;
     }
-    const auto reset_handler32 = static_cast<std::uint32_t>(reset_handler);
-    std::memcpy(viewport_entries[2].bytes.data() + 3, &reset_handler32, sizeof(reset_handler32));
+    const auto reset_prologue = game_abi::seh_prologue(base + reset_handler_rva);
+    std::copy(reset_prologue.begin(), reset_prologue.end(), viewport_entries[2].bytes.begin());
     for (const EntrySpec& entry : viewport_entries)
     {
         if (!in_image(entry.rva, entry.length, size) ||
@@ -289,8 +281,8 @@ HookResult install_passthrough_hooks()
          viewport_entries[3].bytes.data(),
          viewport_entries[3].length},
     }};
-    if (!in_image(callbacks::kLocalizerRva, 1, size) ||
-        !mapped_range(base + callbacks::kLocalizerRva, 1, base, true))
+    if (!in_image(game_ui::kLocalizerRva, 1, size) ||
+        !mapped_range(base + game_ui::kLocalizerRva, 1, base, true))
     {
         failure.stage = "localizer mapping";
         return failure;

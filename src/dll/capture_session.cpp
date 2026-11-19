@@ -1,5 +1,6 @@
 #include "video_export_internal.hpp"
 
+#include "game_abi.hpp"
 #include "native_render_ahead.hpp"
 #include "openal_capture.hpp"
 
@@ -99,10 +100,8 @@ bool emergency_failure(void* shooter, void* fiber) noexcept
     {
         return found;
     }
-    const auto settings_address =
-        *reinterpret_cast<std::uint32_t*>(static_cast<std::byte*>(shooter) + 0x4c);
-    if (settings_address == 0 ||
-        *reinterpret_cast<std::uint32_t*>(static_cast<std::byte*>(shooter) + 0x14) != 0)
+    const auto settings_address = game_abi::field<void*>(shooter, 0x4c);
+    if (settings_address == nullptr || game_abi::field<std::uint32_t>(shooter, 0x14) != 0)
     {
         return false;
     }

@@ -1,6 +1,7 @@
 #include "native_render_ahead.hpp"
 
 #include "bootstrap_diagnostics.hpp"
+#include "game_abi.hpp"
 #include "video_export_internal.hpp"
 
 #include <cstddef>
@@ -11,6 +12,10 @@
 
 namespace cinemania::native_render_ahead
 {
+using game_abi::executable_image;
+using game_abi::field;
+using game_abi::function_at;
+
 namespace
 {
 using game_export::detail::Kind;
@@ -58,44 +63,33 @@ enum class RestoreCause
 };
 thread_local bool changing = false;
 
-std::uint32_t word(const void* object, std::size_t offset)
-{
-    return *reinterpret_cast<const std::uint32_t*>(static_cast<const std::byte*>(object) + offset);
-}
-
-void* pointer(const void* object, std::size_t offset)
-{
-    return *reinterpret_cast<void* const*>(static_cast<const std::byte*>(object) + offset);
-}
-
-std::byte* image()
-{
-    return reinterpret_cast<std::byte*>(GetModuleHandleW(nullptr));
-}
-
 bool settings_match(void* viewport, std::uint32_t count, std::uint32_t third)
 {
-    return word(viewport, kCount) == count && word(viewport, kPolicy) == 1 &&
-           word(viewport, kThird) == third && word(viewport, kMirrorCount) == count &&
-           word(viewport, kMirrorPolicy) == 1 && word(viewport, kMirrorThird) == third;
+    return field<std::uint32_t>(viewport, kCount) == count &&
+           field<std::uint32_t>(viewport, kPolicy) == 1 &&
+           field<std::uint32_t>(viewport, kThird) == third &&
+           field<std::uint32_t>(viewport, kMirrorCount) == count &&
+           field<std::uint32_t>(viewport, kMirrorPolicy) == 1 &&
+           field<std::uint32_t>(viewport, kMirrorThird) == third;
 }
 
 std::shared_ptr<Session> capture_session(void* viewport)
 {
-    void* writer = pointer(viewport, kWriter);
+    void* writer = field<void*>(viewport, kWriter);
     if (!writer)
     {
         return {};
     }
 
-    void* context = pointer(writer, 4);
+    void* context = field<void*>(writer, 4);
     if (!context)
     {
         return {};
     }
 
     bool synthetic = false;
-    auto session = game_export::detail::lookup(pointer(context, 8), Kind::compressed, synthetic);
+    auto session =
+        game_export::detail::lookup(field<void*>(context, 8), Kind::compressed, synthetic);
     if (!session || !synthetic)
     {
         return {};
@@ -103,8 +97,8 @@ std::shared_ptr<Session> capture_session(void* viewport)
 
     bool raw_synthetic = false;
     bool file_synthetic = false;
-    auto raw = game_export::detail::lookup(pointer(context, 4), Kind::raw, raw_synthetic);
-    auto file = game_export::detail::lookup(pointer(context, 0), Kind::file, file_synthetic);
+    auto raw = game_export::detail::lookup(field<void*>(context, 4), Kind::raw, raw_synthetic);
+    auto file = game_export::detail::lookup(field<void*>(context, 0), Kind::file, file_synthetic);
     if (!raw_synthetic || !file_synthetic || raw != session || file != session)
     {
         return {};
@@ -183,8 +177,8 @@ void restore(const std::shared_ptr<Session>& session, void* viewport, RestoreCau
         return;
     }
 
-    if (pointer(viewport, kDevice) != session->render_ahead_device ||
-        (word(image(), kCapability) & 2) == 0)
+    if (field<void*>(viewport, kDevice) != session->render_ahead_device ||
+        (field<std::uint32_t>(executable_image(), kCapability) & 2) == 0)
     {
         fail_session(session);
         clear(session);
@@ -193,13 +187,14 @@ void restore(const std::shared_ptr<Session>& session, void* viewport, RestoreCau
     }
 
     changing = true;
-    reinterpret_cast<NoArguments>(image() + kRelease)(viewport);
-    reinterpret_cast<Configure>(image() + kConfigure)(viewport, 0, 1, session->render_ahead_third);
-    reinterpret_cast<NoArguments>(image() + kInitialize)(viewport);
+    function_at<NoArguments>(executable_image(), kRelease)(viewport);
+    function_at<Configure>(executable_image(),
+                           kConfigure)(viewport, 0, 1, session->render_ahead_third);
+    function_at<NoArguments>(executable_image(), kInitialize)(viewport);
     changing = false;
 
-    if (!settings_match(viewport, 1, session->render_ahead_third) || word(viewport, kIssue) != 0 ||
-        word(viewport, kRetire) != 0)
+    if (!settings_match(viewport, 1, session->render_ahead_third) ||
+        field<std::uint32_t>(viewport, kIssue) != 0 || field<std::uint32_t>(viewport, kRetire) != 0)
     {
         fail_session(session);
         append_diagnostic("native render-ahead: restoration validation failed\n");
@@ -214,9 +209,10 @@ void restore(const std::shared_ptr<Session>& session, void* viewport, RestoreCau
 
 void capture_impl(void* viewport, std::shared_ptr<Session>& session)
 {
-    if (changing || !viewport || word(viewport, kCaptureActive) != 1 ||
-        word(viewport, 0) != reinterpret_cast<std::uint32_t>(image() + kViewportVtable) ||
-        !pointer(viewport, kDevice) || (word(image(), kCapability) & 2) == 0)
+    if (changing || !viewport || field<std::uint32_t>(viewport, kCaptureActive) != 1 ||
+        !game_abi::has_vtable(viewport, executable_image() + kViewportVtable) ||
+        !field<void*>(viewport, kDevice) ||
+        (field<std::uint32_t>(executable_image(), kCapability) & 2) == 0)
     {
         return;
     }
@@ -241,8 +237,8 @@ void capture_impl(void* viewport, std::shared_ptr<Session>& session)
         return;
     }
 
-    const auto third = word(viewport, kThird);
-    auto* entries = static_cast<Entry*>(pointer(viewport, kEntries));
+    const auto third = field<std::uint32_t>(viewport, kThird);
+    auto* entries = static_cast<Entry*>(field<void*>(viewport, kEntries));
     if (!settings_match(viewport, 1, third))
     {
         session->render_ahead_attempted = true;
@@ -250,8 +246,8 @@ void capture_impl(void* viewport, std::shared_ptr<Session>& session)
         return;
     }
 
-    if (!entries || word(viewport, kIssue) != 0 || word(viewport, kRetire) != 0 ||
-        entries[0].pending != 0 ||
+    if (!entries || field<std::uint32_t>(viewport, kIssue) != 0 ||
+        field<std::uint32_t>(viewport, kRetire) != 0 || entries[0].pending != 0 ||
         !game_export::detail::bind_render_ahead_viewport(session, viewport))
     {
         return;
@@ -262,16 +258,16 @@ void capture_impl(void* viewport, std::shared_ptr<Session>& session)
     QueryPerformanceCounter(&start);
     session->render_ahead_start_ticks = static_cast<std::uint64_t>(start.QuadPart);
     session->render_ahead_start_frame = session->next_frame;
-    session->render_ahead_device = pointer(viewport, kDevice);
+    session->render_ahead_device = field<void*>(viewport, kDevice);
     session->render_ahead_third = third;
     session->render_ahead_active = true;
 
     changing = true;
-    reinterpret_cast<Configure>(image() + kConfigure)(viewport, 1, 1, third);
+    function_at<Configure>(executable_image(), kConfigure)(viewport, 1, 1, third);
     changing = false;
 
-    if (!settings_match(viewport, 2, third) || word(viewport, kIssue) != 0 ||
-        word(viewport, kRetire) != 0)
+    if (!settings_match(viewport, 2, third) || field<std::uint32_t>(viewport, kIssue) != 0 ||
+        field<std::uint32_t>(viewport, kRetire) != 0)
     {
         fail_session(session);
         append_diagnostic(
@@ -357,7 +353,7 @@ void lifecycle(void* viewport, bool device_lost) noexcept
 
 void cleanup(void* viewport) noexcept
 {
-    if (!viewport || changing || word(viewport, kCaptureStop) == 0)
+    if (!viewport || changing || field<std::uint32_t>(viewport, kCaptureStop) == 0)
     {
         return;
     }

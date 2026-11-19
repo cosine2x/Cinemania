@@ -1,6 +1,8 @@
 #include "hook_callbacks.hpp"
 
+#include "game_abi.hpp"
 #include "game_export.hpp"
+#include "game_ui.hpp"
 
 #include <array>
 #include <intrin.h>
@@ -62,8 +64,7 @@ unsigned int __fastcall open_export(void* writer, void*, void* path)
 
 namespace
 {
-using Localize = const wchar_t*(__thiscall*)(void*, const wchar_t*);
-Localize game_localize = nullptr;
+game_ui::Localize game_localize = nullptr;
 
 const wchar_t* __fastcall
 localize_export_message(void* localizer, const void* caller, const wchar_t* key)
@@ -146,17 +147,13 @@ void prepare_localization_hooks(unsigned char* image,
          &localize_result_status_continuation},
     }};
 
-    game_localize = reinterpret_cast<Localize>(image + kLocalizerRva);
+    game_localize = game_abi::function_at<game_ui::Localize>(image, game_ui::kLocalizerRva);
     for (std::size_t index = 0; index < sites.size(); ++index)
     {
         const CallSite& site = sites[index];
         auto* target = image + site.rva;
         *site.continuation = target + site.bytes.size();
-        entries[index] = {target,
-                          reinterpret_cast<void*>(site.bridge),
-                          nullptr,
-                          site.bytes.data(),
-                          site.bytes.size()};
+        entries[index] = make_entry_hook(target, site.bridge, site.bytes);
     }
 }
 

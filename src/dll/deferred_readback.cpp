@@ -1,6 +1,7 @@
 #include "deferred_readback.hpp"
 
 #include "bootstrap_diagnostics.hpp"
+#include "game_abi.hpp"
 #include "video_export_internal.hpp"
 
 #include <atomic>
@@ -13,6 +14,10 @@
 
 namespace cinemania::readback
 {
+using game_abi::executable_image;
+using game_abi::field;
+using game_abi::function_at;
+
 namespace
 {
 using game_export::detail::Kind;
@@ -25,16 +30,6 @@ std::uint64_t ticks() noexcept
     LARGE_INTEGER value{};
     QueryPerformanceCounter(&value);
     return static_cast<std::uint64_t>(value.QuadPart);
-}
-
-void* pointer(void* object, std::size_t offset)
-{
-    return *reinterpret_cast<void**>(static_cast<std::byte*>(object) + offset);
-}
-
-std::uint32_t word(void* object, std::size_t offset)
-{
-    return *reinterpret_cast<std::uint32_t*>(static_cast<std::byte*>(object) + offset);
 }
 
 std::shared_ptr<Session> session_for(void* viewport)
@@ -54,7 +49,7 @@ std::shared_ptr<Session> session_for(void* viewport)
         return bound;
     }
 
-    void* writer = pointer(viewport, 0x160);
+    void* writer = field<void*>(viewport, 0x160);
     if (!writer)
     {
         if (bound)
@@ -64,7 +59,7 @@ std::shared_ptr<Session> session_for(void* viewport)
         return bound;
     }
 
-    void* context = pointer(writer, 4);
+    void* context = field<void*>(writer, 4);
     if (!context)
     {
         if (bound)
@@ -75,7 +70,8 @@ std::shared_ptr<Session> session_for(void* viewport)
     }
 
     bool synthetic = false;
-    auto session = game_export::detail::lookup(pointer(context, 8), Kind::compressed, synthetic);
+    auto session =
+        game_export::detail::lookup(field<void*>(context, 8), Kind::compressed, synthetic);
     if (!session || !synthetic || (bound && bound != session))
     {
         if (bound)
@@ -87,8 +83,8 @@ std::shared_ptr<Session> session_for(void* viewport)
 
     bool raw_synthetic = false;
     bool file_synthetic = false;
-    auto raw = game_export::detail::lookup(pointer(context, 4), Kind::raw, raw_synthetic);
-    auto file = game_export::detail::lookup(pointer(context, 0), Kind::file, file_synthetic);
+    auto raw = game_export::detail::lookup(field<void*>(context, 4), Kind::raw, raw_synthetic);
+    auto file = game_export::detail::lookup(field<void*>(context, 0), Kind::file, file_synthetic);
     if (!raw_synthetic || !file_synthetic || raw != session || file != session)
     {
         session->foreign_failure.store(true);
@@ -111,7 +107,7 @@ bool deliver(Session& session, void* viewport, bool wait)
             return false;
         }
 
-        auto* pixels = static_cast<std::byte*>(pointer(viewport, 0x1610));
+        auto* pixels = static_cast<std::byte*>(field<void*>(viewport, 0x1610));
         if (!pixels)
         {
             session.readback_failure_stage = "delivery-buffer";
@@ -131,10 +127,10 @@ bool deliver(Session& session, void* viewport, bool wait)
             }
 
             using Write = unsigned int(__thiscall*)(void*, void*);
-            const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-            const auto writer = reinterpret_cast<Write>(base + 0x55a0f0);
+
+            const auto writer = function_at<Write>(executable_image(), 0x55a0f0);
             if (session_for(viewport).get() != &session || session.foreign_failure.load() ||
-                word(pointer(session.readback_writer, 4), 0x40) != index)
+                field<std::uint32_t>(field<void*>(session.readback_writer, 4), 0x40) != index)
             {
                 session.readback_failure_stage = "delivery-context";
                 return false;
@@ -203,8 +199,8 @@ bool activate(const std::shared_ptr<Session>& session, void* viewport, const Cap
         return false;
     }
 
-    session->readback_writer = pointer(viewport, 0x160);
-    session->readback_context = pointer(session->readback_writer, 4);
+    session->readback_writer = field<void*>(viewport, 0x160);
+    session->readback_context = field<void*>(session->readback_writer, 4);
     session->readback_source = source.surface;
     session->readback_resolve = source.resolve;
     session->readback_format = source.description.Format;
@@ -218,13 +214,13 @@ bool activate(const std::shared_ptr<Session>& session, void* viewport, const Cap
 
 bool query_source(const Session& session, void* viewport, CaptureSource& source)
 {
-    source.device = static_cast<IDirect3DDevice9*>(pointer(viewport, 0x9f8));
+    source.device = static_cast<IDirect3DDevice9*>(field<void*>(viewport, 0x9f8));
     using StackEntry = void*(__thiscall*)(void*, unsigned int);
-    const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    const auto stack_entry = reinterpret_cast<StackEntry>(base + 0x3ac1e0);
+
+    const auto stack_entry = function_at<StackEntry>(executable_image(), 0x3ac1e0);
     void* entry = stack_entry(static_cast<std::byte*>(viewport) + 0x9fc, 0);
-    source.surface = entry ? static_cast<IDirect3DSurface9*>(pointer(entry, 0x10)) : nullptr;
-    source.resolve = static_cast<IDirect3DSurface9*>(pointer(viewport, 0x160c));
+    source.surface = entry ? static_cast<IDirect3DSurface9*>(field<void*>(entry, 0x10)) : nullptr;
+    source.resolve = static_cast<IDirect3DSurface9*>(field<void*>(viewport, 0x160c));
 
     if (session.readback_active &&
         (!session.readback.matches(source.device,
@@ -319,8 +315,8 @@ bool run_capture(void* viewport, const std::shared_ptr<Session>& session)
         return session->readback_active;
     }
     if (session->readback_active &&
-        (session->readback_writer != pointer(viewport, 0x160) ||
-         session->readback_context != pointer(session->readback_writer, 4)))
+        (session->readback_writer != field<void*>(viewport, 0x160) ||
+         session->readback_context != field<void*>(session->readback_writer, 4)))
     {
         fail(*session, session);
         return true;
@@ -338,7 +334,7 @@ bool run_capture(void* viewport, const std::shared_ptr<Session>& session)
     {
         return false;
     }
-    if (word(viewport, 0x150) != 0 || word(viewport, 0x558) != 0)
+    if (field<std::uint32_t>(viewport, 0x150) != 0 || field<std::uint32_t>(viewport, 0x558) != 0)
     {
         if (session->readback_active)
         {
@@ -408,7 +404,7 @@ bool capture(void* viewport) noexcept
 
 void cleanup(void* viewport) noexcept
 {
-    if (!enabled.load() || !viewport || word(viewport, 0x550) == 0)
+    if (!enabled.load() || !viewport || field<std::uint32_t>(viewport, 0x550) == 0)
     {
         return;
     }

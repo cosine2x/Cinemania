@@ -1,5 +1,6 @@
 #include "hd_replay_file.hpp"
 
+#include "game_abi.hpp"
 #include "win32_file.hpp"
 
 #include <algorithm>
@@ -22,6 +23,16 @@ constexpr std::uint32_t kMaxBodyBytes = 64 * 1024 * 1024;
 constexpr std::wstring_view kExtension = L".Replay.Gbx";
 
 // The pinned game contains the x86 LZO 1X and zlib 1.2.3 codecs used by its GBX archives.
+constexpr std::size_t kLzoDecompressRva = 0x50fc00;
+constexpr std::size_t kLzoCompressRva = 0x50faf0;
+constexpr std::size_t kDeflateInitRva = 0x5175e0;
+constexpr std::size_t kInflateInitRva = 0x517740;
+constexpr std::size_t kDeflateRva = 0x515df0;
+constexpr std::size_t kInflateRva = 0x517870;
+constexpr std::size_t kDeflateEndRva = 0x5165d0;
+constexpr std::size_t kInflateEndRva = 0x518e60;
+
+using game_abi::function_at;
 using Lzo = int(__cdecl*)(const void*, std::uint32_t, void*, std::uint32_t*, void*);
 
 struct ZStream
@@ -57,8 +68,14 @@ void append_u32(std::vector<std::uint8_t>& bytes, std::uint32_t value)
     bytes.insert(bytes.end(), first, first + sizeof(value));
 }
 
+enum class ZlibOperation
+{
+    deflate,
+    inflate
+};
+
 bool zlib(unsigned char* game,
-          bool compress,
+          ZlibOperation operation,
           std::span<const std::uint8_t> input,
           std::vector<std::uint8_t>& output)
 {
@@ -67,9 +84,10 @@ bool zlib(unsigned char* game,
     using Step = int(__cdecl*)(ZStream*, int);
     using End = int(__cdecl*)(ZStream*);
     ZStream stream{};
+    const bool compress = operation == ZlibOperation::deflate;
     const int initialized =
-        compress ? reinterpret_cast<DeflateInit>(game + 0x5175e0)(&stream, 6, "1.2.3", 0x38)
-                 : reinterpret_cast<Init>(game + 0x517740)(&stream, "1.2.3", 0x38);
+        compress ? function_at<DeflateInit>(game, kDeflateInitRva)(&stream, 6, "1.2.3", 0x38)
+                 : function_at<Init>(game, kInflateInitRva)(&stream, "1.2.3", 0x38);
     if (initialized != 0)
     {
         return false;
@@ -78,10 +96,10 @@ bool zlib(unsigned char* game,
     stream.input_available = static_cast<std::uint32_t>(input.size());
     stream.output = output.data();
     stream.output_available = static_cast<std::uint32_t>(output.size());
-    const auto step = reinterpret_cast<Step>(game + (compress ? 0x515df0 : 0x517870));
+    const auto step = function_at<Step>(game, compress ? kDeflateRva : kInflateRva);
     constexpr int finish = 4;
     const int result = step(&stream, finish);
-    const int closed = reinterpret_cast<End>(game + (compress ? 0x5165d0 : 0x518e60))(&stream);
+    const int closed = function_at<End>(game, compress ? kDeflateEndRva : kInflateEndRva)(&stream);
     if (result != 1 || closed != 0 || stream.input_used != input.size() ||
         (!compress && stream.output_used != output.size()))
     {
@@ -149,7 +167,7 @@ bool decode_body(unsigned char* game, SourceFile& source)
     }
     source.body.resize(decoded_size);
     std::uint32_t written = decoded_size;
-    const auto decompress = reinterpret_cast<Lzo>(game + 0x50fc00);
+    const auto decompress = function_at<Lzo>(game, kLzoDecompressRva);
     return decompress(
                file.data() + start + 8, compressed_size, source.body.data(), &written, nullptr) ==
                0 &&
@@ -159,7 +177,7 @@ bool decode_body(unsigned char* game, SourceFile& source)
 bool matches_layout(std::span<const std::uint8_t> raw, const SampleLayout& layout)
 {
     if (read_u32(raw, 0) != layout.vehicle_class || read_u32(raw, 4) != 1 ||
-        read_u32(raw, 12) != layout.period || read_u32(raw, 16) != layout.version)
+        read_u32(raw, 12) != layout.period_ms || read_u32(raw, 16) != layout.version)
     {
         return false;
     }
@@ -214,7 +232,7 @@ bool find_sample_chunk(unsigned char* game, SourceFile& source, const SampleLayo
             return false;
         }
         std::vector<std::uint8_t> raw(decoded);
-        if (!zlib(game, false, std::span(body).subspan(i + 12, compressed), raw) ||
+        if (!zlib(game, ZlibOperation::inflate, std::span(body).subspan(i + 12, compressed), raw) ||
             !matches_layout(raw, layout))
         {
             continue;
@@ -261,7 +279,7 @@ std::vector<std::uint8_t> encode_samples(const SourceFile& source,
         }
     }
     auto raw = source.sample_header;
-    append_u32(raw, kSamplePeriod);
+    append_u32(raw, kSamplePeriodMs);
     append_u32(raw, kVehicleStateVersion);
     append_u32(raw, static_cast<std::uint32_t>(used));
     raw.insert(raw.end(), states.begin(), states.begin() + used);
@@ -328,7 +346,8 @@ const wchar_t* open_source(unsigned char* game,
         return L"Select a replay stored as a local .Replay.Gbx file.";
     }
     source.destination = path.substr(0, path.size() - kExtension.size()) + L"_HD.Replay.Gbx";
-    if (layout.version != kVehicleStateVersion || layout.period < kSamplePeriod || layout.count < 2)
+    if (layout.version != kVehicleStateVersion || layout.period_ms < kSamplePeriodMs ||
+        layout.count < 2)
     {
         return L"This replay uses an unsupported car sample format.";
     }
@@ -351,7 +370,7 @@ const wchar_t* save_replay(unsigned char* game,
         return L"The game did not capture a complete 10 ms sample stream.";
     }
     std::vector<std::uint8_t> sample(raw.size() + raw.size() / 16 + 64);
-    if (!zlib(game, true, raw, sample))
+    if (!zlib(game, ZlibOperation::deflate, raw, sample))
     {
         return L"Could not compress the captured car samples.";
     }
@@ -368,7 +387,7 @@ const wchar_t* save_replay(unsigned char* game,
         std::vector<std::uint8_t> compressed(body.size() + body.size() / 16 + 67);
         std::vector<std::uint32_t> work(0x10000 / sizeof(std::uint32_t));
         std::uint32_t size = static_cast<std::uint32_t>(compressed.size());
-        const auto compress = reinterpret_cast<Lzo>(game + 0x50faf0);
+        const auto compress = function_at<Lzo>(game, kLzoCompressRva);
         if (compress(body.data(),
                      static_cast<std::uint32_t>(body.size()),
                      compressed.data(),

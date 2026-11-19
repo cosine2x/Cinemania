@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -7,14 +8,14 @@
 
 namespace cinemania::hd_replay
 {
-inline constexpr std::uint32_t kSamplePeriod = 10;
+inline constexpr std::uint32_t kSamplePeriodMs = 10;
 inline constexpr std::uint32_t kMaxStateBytes = 0x430440;
 
 struct SampleLayout
 {
     std::uint32_t vehicle_class;
     std::uint32_t version;
-    std::uint32_t period;
+    std::uint32_t period_ms;
     std::uint32_t count;
 };
 
