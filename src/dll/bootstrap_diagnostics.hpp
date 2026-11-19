@@ -1,6 +1,6 @@
 #pragma once
 
-#include "executable_check.hpp"
+#include "game/executable_check.hpp"
 #include "passthrough_hooks.hpp"
 
 #include <string_view>

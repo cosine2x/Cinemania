@@ -1,8 +1,8 @@
 #include "video_export_internal.hpp"
 
-#include "game_abi.hpp"
+#include "audio/openal_capture.hpp"
+#include "game/game_abi.hpp"
 #include "native_render_ahead.hpp"
-#include "openal_capture.hpp"
 
 #include <algorithm>
 #include <array>

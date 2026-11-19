@@ -1,8 +1,8 @@
 #include "game_export.hpp"
 
-#include "game_abi.hpp"
-#include "openal_capture.hpp"
-#include "openal_capture_hooks.hpp"
+#include "audio/openal_capture.hpp"
+#include "audio/openal_capture_hooks.hpp"
+#include "game/game_abi.hpp"
 #include "video_export_internal.hpp"
 
 #include <atomic>

@@ -1,8 +1,8 @@
 #include "hook_callbacks.hpp"
 
-#include "game_abi.hpp"
+#include "game/game_abi.hpp"
+#include "game/game_ui.hpp"
 #include "game_export.hpp"
-#include "game_ui.hpp"
 
 #include <array>
 #include <intrin.h>

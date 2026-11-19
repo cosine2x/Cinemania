@@ -1,6 +1,6 @@
 #include "game_export.hpp"
 
-#include "audio_export.hpp"
+#include "audio/audio_export.hpp"
 #include "video_export_internal.hpp"
 
 #include <climits>

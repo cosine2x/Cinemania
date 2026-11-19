@@ -3,7 +3,7 @@
 #include "export_volume.hpp"
 #include "mixer_pcm_buffer.hpp"
 #include "openal_capture_compat.hpp"
-#include "video_export_internal.hpp"
+#include "video/video_export_internal.hpp"
 
 #include <array>
 #include <atomic>

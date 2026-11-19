@@ -1,6 +1,6 @@
 #pragma once
 
-#include "encoder_client.hpp"
+#include "encoder/encoder_client.hpp"
 #if defined(CINEMANIA_DEFERRED_READBACK)
 #include "readback_ring.hpp"
 #endif

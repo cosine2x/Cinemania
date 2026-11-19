@@ -1,6 +1,6 @@
 #pragma once
 
-#include "hook_transaction.hpp"
+#include "game/hook_transaction.hpp"
 
 // clang-format off
 // Windows types must precede VfW declarations.

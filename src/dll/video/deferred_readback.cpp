@@ -1,7 +1,7 @@
 #include "deferred_readback.hpp"
 
 #include "bootstrap_diagnostics.hpp"
-#include "game_abi.hpp"
+#include "game/game_abi.hpp"
 #include "video_export_internal.hpp"
 
 #include <atomic>

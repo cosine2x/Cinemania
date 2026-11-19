@@ -1,10 +1,10 @@
 #include "bootstrap_diagnostics.hpp"
-#include "executable_check.hpp"
-#include "game_export.hpp"
+#include "game/executable_check.hpp"
 #include "passthrough_hooks.hpp"
+#include "video/game_export.hpp"
 
 #if defined(CINEMANIA_DEFERRED_READBACK)
-#include "deferred_readback.hpp"
+#include "video/deferred_readback.hpp"
 #endif
 
 #include <windows.h>

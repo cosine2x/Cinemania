@@ -1,14 +1,14 @@
 #include "passthrough_hooks.hpp"
 
+#include "audio/export_volume.hpp"
+#include "audio/openal_capture_hooks.hpp"
 #include "bootstrap_diagnostics.hpp"
-#include "export_volume.hpp"
-#include "game_abi.hpp"
-#include "game_ui.hpp"
-#include "hd_replay.hpp"
-#include "hook_callbacks.hpp"
-#include "hook_transaction.hpp"
-#include "openal_capture_hooks.hpp"
-#include "viewport_capture_hooks.hpp"
+#include "game/game_abi.hpp"
+#include "game/game_ui.hpp"
+#include "game/hook_transaction.hpp"
+#include "replay/hd_replay.hpp"
+#include "video/hook_callbacks.hpp"
+#include "video/viewport_capture_hooks.hpp"
 
 #include <algorithm>
 #include <array>

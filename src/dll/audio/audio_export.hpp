@@ -1,6 +1,6 @@
 #pragma once
 
-#include "video_export_internal.hpp"
+#include "video/video_export_internal.hpp"
 
 #include <vfw.h>
 

@@ -1,6 +1,6 @@
 #include "hd_replay_file.hpp"
 
-#include "game_abi.hpp"
+#include "game/game_abi.hpp"
 #include "win32_file.hpp"
 
 #include <algorithm>

@@ -1,6 +1,6 @@
 #include "hd_replay_menu.hpp"
 
-#include "game_abi.hpp"
+#include "game/game_abi.hpp"
 
 #include <array>
 #include <cstdint>

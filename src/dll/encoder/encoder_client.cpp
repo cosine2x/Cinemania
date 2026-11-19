@@ -1,6 +1,6 @@
 #include "encoder_client.hpp"
 
-#include "../common/protocol.hpp"
+#include "../../common/protocol.hpp"
 #include "encoder_scratch.hpp"
 #include "encoder_transport.hpp"
 

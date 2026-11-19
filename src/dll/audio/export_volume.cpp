@@ -1,7 +1,7 @@
 #include "export_volume.hpp"
 
 #include "openal_capture.hpp"
-#include "video_export_internal.hpp"
+#include "video/video_export_internal.hpp"
 
 #include <array>
 #include <cmath>

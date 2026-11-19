@@ -1,7 +1,7 @@
 #include "hd_replay.hpp"
 
-#include "game_abi.hpp"
-#include "game_ui.hpp"
+#include "game/game_abi.hpp"
+#include "game/game_ui.hpp"
 #include "hd_replay_file.hpp"
 #include "hd_replay_menu.hpp"
 

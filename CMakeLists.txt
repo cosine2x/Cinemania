@@ -36,40 +36,41 @@ else()
     target_include_directories(CinemaniaMinHook PUBLIC third_party/minhook/include)
     set_property(TARGET CinemaniaMinHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_library(Cinemania SHARED
-        src/dll/audio_export.cpp
-        src/dll/export_volume.cpp
-        src/dll/export_volume_bridges.cpp
-        src/dll/mixer_pcm_buffer.cpp
-        src/dll/openal_capture.cpp
-        src/dll/openal_capture_hooks.cpp
+        src/dll/audio/audio_export.cpp
+        src/dll/audio/export_volume.cpp
+        src/dll/audio/export_volume_bridges.cpp
+        src/dll/audio/mixer_pcm_buffer.cpp
+        src/dll/audio/openal_capture.cpp
+        src/dll/audio/openal_capture_hooks.cpp
         src/dll/bootstrap.cpp
         src/dll/bootstrap_diagnostics.cpp
-        src/dll/executable_check.cpp
-        src/dll/capture_session.cpp
-        src/dll/encoder_client.cpp
-        src/dll/encoder_scratch.cpp
-        src/dll/encoder_transport.cpp
-        src/dll/game_export.cpp
-        src/dll/game_ui.cpp
-        src/dll/hd_replay.cpp
-        src/dll/hd_replay_file.cpp
-        src/dll/hd_replay_menu.cpp
-        src/dll/video_export.cpp
+        src/dll/game/executable_check.cpp
+        src/dll/video/capture_session.cpp
+        src/dll/encoder/encoder_client.cpp
+        src/dll/encoder/encoder_scratch.cpp
+        src/dll/encoder/encoder_transport.cpp
+        src/dll/video/game_export.cpp
+        src/dll/game/game_ui.cpp
+        src/dll/replay/hd_replay.cpp
+        src/dll/replay/hd_replay_file.cpp
+        src/dll/replay/hd_replay_menu.cpp
+        src/dll/video/video_export.cpp
         src/common/protocol.cpp
-        src/dll/hook_callbacks.cpp
-        src/dll/hook_transaction.cpp
+        src/dll/video/hook_callbacks.cpp
+        src/dll/game/hook_transaction.cpp
         src/dll/passthrough_hooks.cpp
-        src/dll/viewport_capture_hooks.cpp
-        src/dll/native_render_ahead.cpp
+        src/dll/video/viewport_capture_hooks.cpp
+        src/dll/video/native_render_ahead.cpp
         src/dll/cinemania.def)
 
     if(CINEMANIA_DEFERRED_READBACK)
         target_sources(Cinemania PRIVATE
-            src/dll/readback_ring.cpp
-            src/dll/deferred_readback.cpp)
+            src/dll/video/readback_ring.cpp
+            src/dll/video/deferred_readback.cpp)
         target_compile_definitions(Cinemania PRIVATE CINEMANIA_DEFERRED_READBACK=1)
     endif()
 
+    target_include_directories(Cinemania PRIVATE src/dll)
     target_compile_features(Cinemania PRIVATE cxx_std_20)
     target_compile_options(Cinemania PRIVATE /W4 /WX /permissive- /EHsc)
     target_compile_definitions(Cinemania PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

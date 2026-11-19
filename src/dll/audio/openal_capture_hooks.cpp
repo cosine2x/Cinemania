@@ -1,11 +1,11 @@
 #include "openal_capture_hooks.hpp"
 
 #include "export_volume.hpp"
-#include "game_abi.hpp"
-#include "game_export.hpp"
+#include "game/game_abi.hpp"
 #include "openal_capture.hpp"
 #include "openal_capture_compat.hpp"
-#include "video_export_internal.hpp"
+#include "video/game_export.hpp"
+#include "video/video_export_internal.hpp"
 
 #include <MinHook.h>
 
