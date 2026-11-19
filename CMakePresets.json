@@ -8,7 +8,6 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CINEMANIA_BUILD_WORKER": "OFF",
-                "CINEMANIA_DEFERRED_READBACK": "ON",
                 "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG",
                 "CMAKE_C_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG"
             }

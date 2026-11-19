@@ -1,9 +1,7 @@
 #pragma once
 
 #include "encoder/encoder_client.hpp"
-#if defined(CINEMANIA_DEFERRED_READBACK)
 #include "readback_ring.hpp"
-#endif
 
 #include <atomic>
 #include <cstddef>
@@ -83,7 +81,6 @@ struct Session
     LONG next_audio = 0;
     std::uint64_t audio_samples = 0;
 
-#if defined(CINEMANIA_DEFERRED_READBACK)
     // Viewport is guarded by the registry mutex; remaining fields belong to the producer.
     dll::ReadbackRing readback;
     void* readback_viewport = nullptr;
@@ -106,7 +103,6 @@ struct Session
     DWORD device_flags = 0;
     const char* readback_failure_stage = nullptr;
     HRESULT readback_failure_code = S_OK;
-#endif
 };
 
 void record_emergency(void* shooter, void* fiber) noexcept;
@@ -114,11 +110,9 @@ bool emergency_failure(void* shooter, void* fiber) noexcept;
 void clear_emergency(void* shooter, void* fiber) noexcept;
 std::shared_ptr<Session> find_session(void* shooter, void* fiber);
 std::shared_ptr<Session> current_session();
-#if defined(CINEMANIA_DEFERRED_READBACK)
 std::shared_ptr<Session> find_readback_viewport(void* viewport);
 bool bind_readback_viewport(const std::shared_ptr<Session>& session, void* viewport);
 void unbind_readback_viewport(const std::shared_ptr<Session>& session);
-#endif
 std::shared_ptr<Session> find_render_ahead_viewport(void* viewport);
 bool bind_render_ahead_viewport(const std::shared_ptr<Session>& session, void* viewport);
 void unbind_render_ahead_viewport(const std::shared_ptr<Session>& session);

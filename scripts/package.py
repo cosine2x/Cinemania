@@ -143,7 +143,7 @@ def source_snapshot():
 def release_config():
     expected = {
         "x86": {"CMAKE_BUILD_TYPE": "Release", "CINEMANIA_BUILD_WORKER": "OFF",
-                "CINEMANIA_DEFERRED_READBACK": "ON", "CMAKE_GENERATOR": "Ninja",
+                "CMAKE_GENERATOR": "Ninja",
                 "CMAKE_C_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG",
                 "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG"},
         "x64": {"CMAKE_BUILD_TYPE": "Release", "CINEMANIA_BUILD_WORKER": "ON",

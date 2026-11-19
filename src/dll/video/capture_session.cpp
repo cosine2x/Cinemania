@@ -138,7 +138,6 @@ std::shared_ptr<Session> find_session(void* shooter, void* fiber)
     return {};
 }
 
-#if defined(CINEMANIA_DEFERRED_READBACK)
 std::shared_ptr<Session> find_readback_viewport(void* viewport)
 {
     Registry& state = registry();
@@ -174,7 +173,6 @@ void unbind_readback_viewport(const std::shared_ptr<Session>& session)
     std::lock_guard lock(state.mutex);
     session->readback_viewport = nullptr;
 }
-#endif
 
 std::shared_ptr<Session> find_render_ahead_viewport(void* viewport)
 {

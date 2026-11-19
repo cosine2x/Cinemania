@@ -6,7 +6,6 @@ if(NOT WIN32 OR NOT MSVC)
 endif()
 
 option(CINEMANIA_BUILD_WORKER "Build the isolated x64 encoder worker" OFF)
-option(CINEMANIA_DEFERRED_READBACK "Build the deferred video readback path" ON)
 if(CINEMANIA_BUILD_WORKER)
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
         message(FATAL_ERROR "CinemaniaWorker requires an x64 build.")
@@ -61,14 +60,9 @@ else()
         src/dll/passthrough_hooks.cpp
         src/dll/video/viewport_capture_hooks.cpp
         src/dll/video/native_render_ahead.cpp
-        src/dll/cinemania.def)
-
-    if(CINEMANIA_DEFERRED_READBACK)
-        target_sources(Cinemania PRIVATE
-            src/dll/video/readback_ring.cpp
-            src/dll/video/deferred_readback.cpp)
-        target_compile_definitions(Cinemania PRIVATE CINEMANIA_DEFERRED_READBACK=1)
-    endif()
+        src/dll/cinemania.def
+        src/dll/video/readback_ring.cpp
+        src/dll/video/deferred_readback.cpp)
 
     target_include_directories(Cinemania PRIVATE src/dll)
     target_compile_features(Cinemania PRIVATE cxx_std_20)
