@@ -1,6 +1,8 @@
 #include "passthrough_hooks.hpp"
 
+#include "bootstrap_diagnostics.hpp"
 #include "export_volume.hpp"
+#include "hd_replay.hpp"
 #include "hook_callbacks.hpp"
 #include "hook_transaction.hpp"
 #include "openal_capture_hooks.hpp"
@@ -250,7 +252,7 @@ HookResult install_passthrough_hooks()
     callbacks::stream_release_original =
         reinterpret_cast<decltype(callbacks::stream_release_original)>(originals[6]);
 
-    std::array<EntryHook, kEntryCount> entries{{
+    std::array<EntryHook, kEntryCount + hd_replay::kHookCount> entries{{
         {base + kEntries[0].rva,
          function_address(callbacks::do_shoot),
          original_address(callbacks::do_shoot_original),
@@ -293,7 +295,8 @@ HookResult install_passthrough_hooks()
         failure.stage = "localizer mapping";
         return failure;
     }
-    const auto localization_entries = std::span(entries).last<callbacks::kLocalizationHookCount>();
+    const auto localization_entries =
+        std::span(entries).first<kEntryCount>().last<callbacks::kLocalizationHookCount>();
     callbacks::prepare_localization_hooks(base, localization_entries);
     for (const EntryHook& entry : localization_entries)
     {
@@ -353,6 +356,13 @@ HookResult install_passthrough_hooks()
     entries[9] = gain_entries[1];
     imports[14] = gain_imports[0];
     imports[15] = gain_imports[1];
-    return install_hooks(entries, imports);
+    const bool hd_ready =
+        hd_replay::prepare(base, std::span(entries).last<hd_replay::kHookCount>());
+    if (!hd_ready)
+    {
+        append_diagnostic("Cinemania: HD replay hook validation failed.");
+    }
+    return install_hooks(
+        std::span(entries).first(kEntryCount + (hd_ready ? hd_replay::kHookCount : 0)), imports);
 }
 } // namespace cinemania

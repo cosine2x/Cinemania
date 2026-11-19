@@ -50,6 +50,8 @@ else()
         src/dll/encoder_scratch.cpp
         src/dll/encoder_transport.cpp
         src/dll/game_export.cpp
+        src/dll/hd_replay.cpp
+        src/dll/hd_replay_file.cpp
         src/dll/video_export.cpp
         src/common/protocol.cpp
         src/dll/hook_callbacks.cpp

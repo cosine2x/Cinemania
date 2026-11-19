@@ -24,7 +24,7 @@ DWORD WINAPI bootstrap(void*)
         {
             hooks = cinemania::install_passthrough_hooks();
             constexpr unsigned int expected_hooks = 32;
-            if (hooks.success && hooks.installed == expected_hooks && !hooks.residual)
+            if (hooks.success && hooks.installed >= expected_hooks && !hooks.residual)
             {
                 cinemania::game_export::enable_video_routing();
 #if defined(CINEMANIA_DEFERRED_READBACK)
